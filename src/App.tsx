@@ -28,6 +28,7 @@ import { useFavouritesStore } from './features/favourites/favouritesStore';
 import { extractMonetThemeFromPalette, extractMonetFromImage, type MonetTheme } from './lib/monetPalette';
 
 import { AuroraCanvas } from './components/AuroraCanvas';
+import { useAppearanceSettingsStore } from './features/settings/appearanceSettingsStore';
 
 function AppShell() {
   useAudioPlayer();
@@ -47,6 +48,7 @@ function AppShell() {
   const [artistMonet, setArtistMonet] = useState<MonetTheme | null>(null);
   const mainAreaRef = useRef<HTMLElement>(null);
   const auroraRef = useRef<HTMLDivElement>(null);
+  const enableVisualEffects = useAppearanceSettingsStore((s) => s.enableVisualEffects);
 
   useEffect(() => {
     loadLikedIds();
@@ -108,19 +110,21 @@ function AppShell() {
 
   return (
     <div className={`app-layout ${isHome ? 'app-layout--home' : ''}`}>
-      <div
-        ref={auroraRef}
-        className={`app-backdrop-aurora ${isHome ? 'app-backdrop-aurora--home' : ''} ${
-          isPlaying ? 'app-backdrop-aurora--playing' : ''
-        }`}
-      >
-        <AuroraCanvas className="app-backdrop-aurora__canvas" />
-        <div className="app-backdrop-aurora__layer1" />
-        <div className="app-backdrop-aurora__layer2" />
-        <div className="app-backdrop-aurora__layer3" />
-        <div className="app-backdrop-aurora__sidebar" />
-        <div className="app-backdrop-aurora__flood" />
-      </div>
+      {enableVisualEffects && (
+        <div
+          ref={auroraRef}
+          className={`app-backdrop-aurora ${isHome ? 'app-backdrop-aurora--home' : ''} ${
+            isPlaying ? 'app-backdrop-aurora--playing' : ''
+          }`}
+        >
+          <div className="app-backdrop-aurora__flood" />
+          <div className="app-backdrop-aurora__layer1" />
+          <div className="app-backdrop-aurora__layer2" />
+          <div className="app-backdrop-aurora__layer3" />
+          <div className="app-backdrop-aurora__sidebar" />
+          <AuroraCanvas className="app-backdrop-aurora__canvas" />
+        </div>
+      )}
       <TitleBar />
       <Sidebar />
       <main ref={mainAreaRef} className="main-area">

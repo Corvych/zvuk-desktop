@@ -233,10 +233,10 @@ a:hover {
   width: 100%;
   height: 680px;
   pointer-events: none;
-  z-index: 2;
-  opacity: 0.95;
-  mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 1) 0%, rgba(0, 0, 0, 0.92) 65%, rgba(0, 0, 0, 0) 100%);
-  -webkit-mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 1) 0%, rgba(0, 0, 0, 0.92) 65%, rgba(0, 0, 0, 0) 100%);
+  z-index: 10;
+  opacity: 1;
+  mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 1) 0%, rgba(0, 0, 0, 0.95) 70%, rgba(0, 0, 0, 0) 100%);
+  -webkit-mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 1) 0%, rgba(0, 0, 0, 0.95) 70%, rgba(0, 0, 0, 0) 100%);
 }
 
 /* Layer 1: Dominant upper glow spanning top-center and top-right */
@@ -247,15 +247,16 @@ a:hover {
   width: 950px;
   height: 750px;
   border-radius: 50%;
+  z-index: 1;
   background: radial-gradient(circle,
-      rgba(var(--aurora-rgb, var(--wave-mood-rgb, 112, 220, 85)), 0.44) 0%,
-      rgba(var(--aurora-rgb, var(--wave-mood-rgb, 112, 220, 85)), 0.22) 42%,
-      rgba(var(--aurora-rgb, var(--wave-mood-rgb, 112, 220, 85)), 0.08) 60%,
+      rgba(var(--aurora-rgb, var(--wave-mood-rgb, 112, 220, 85)), 0.38) 0%,
+      rgba(var(--aurora-rgb, var(--wave-mood-rgb, 112, 220, 85)), 0.18) 42%,
+      rgba(var(--aurora-rgb, var(--wave-mood-rgb, 112, 220, 85)), 0.06) 60%,
       transparent 75%);
-  filter: blur(var(--audio-glow-blur, 85px)) brightness(calc(1 + var(--audio-bass, 0) * 0.35));
+  filter: blur(75px);
   transform: scale(var(--audio-glow-scale, 1)) translateZ(0);
-  opacity: var(--audio-glow-opacity, 0.6);
-  transition: background 0.4s ease-out, transform 0.08s ease-out, opacity 0.08s ease-out, filter 0.08s ease-out;
+  opacity: var(--audio-glow-opacity, 0.45);
+  transition: background 0.4s ease-out, transform 0.08s ease-out, opacity 0.08s ease-out;
   pointer-events: none;
 }
 
@@ -267,14 +268,15 @@ a:hover {
   width: 840px;
   height: 720px;
   border-radius: 50%;
+  z-index: 1;
   background: radial-gradient(circle,
-      rgba(var(--aurora-secondary-rgb, var(--aurora-rgb, var(--wave-mood-rgb, 112, 220, 85))), 0.48) 0%,
-      rgba(var(--aurora-secondary-rgb, var(--aurora-rgb, var(--wave-mood-rgb, 112, 220, 85))), 0.28) 40%,
-      rgba(var(--aurora-secondary-rgb, var(--aurora-rgb, var(--wave-mood-rgb, 112, 220, 85))), 0.1) 60%,
+      rgba(var(--aurora-secondary-rgb, var(--aurora-rgb, var(--wave-mood-rgb, 112, 220, 85))), 0.40) 0%,
+      rgba(var(--aurora-secondary-rgb, var(--aurora-rgb, var(--wave-mood-rgb, 112, 220, 85))), 0.22) 40%,
+      rgba(var(--aurora-secondary-rgb, var(--aurora-rgb, var(--wave-mood-rgb, 112, 220, 85))), 0.08) 60%,
       transparent 75%);
-  filter: blur(calc(80px + var(--audio-bass, 0) * 20px));
+  filter: blur(70px);
   transform: scale(calc(1 + var(--audio-energy, 0) * 0.25)) translate(calc(var(--audio-bass, 0) * 15px), calc(var(--audio-mid, 0) * -10px));
-  opacity: calc(0.6 + var(--audio-mid, 0) * 0.4);
+  opacity: calc(0.45 + var(--audio-mid, 0) * 0.35);
   transition: background 0.4s ease-out, transform 0.08s ease-out, opacity 0.08s ease-out;
   pointer-events: none;
 }
@@ -287,13 +289,14 @@ a:hover {
   width: 650px;
   height: 500px;
   border-radius: 50%;
+  z-index: 1;
   background: radial-gradient(circle,
-      rgba(var(--aurora-rgb, var(--wave-mood-rgb, 112, 220, 85)), 0.26) 0%,
-      rgba(var(--aurora-rgb, var(--wave-mood-rgb, 112, 220, 85)), 0.12) 45%,
+      rgba(var(--aurora-rgb, var(--wave-mood-rgb, 112, 220, 85)), 0.22) 0%,
+      rgba(var(--aurora-rgb, var(--wave-mood-rgb, 112, 220, 85)), 0.10) 45%,
       transparent 65%);
-  filter: blur(calc(85px + var(--audio-mid, 0) * 15px));
+  filter: blur(70px);
   transform: scale(calc(1 + var(--audio-mid, 0) * 0.2));
-  opacity: calc(0.4 + var(--audio-energy, 0) * 0.4);
+  opacity: calc(0.35 + var(--audio-energy, 0) * 0.35);
   transition: background 0.4s ease-out, transform 0.08s ease-out, opacity 0.08s ease-out;
   pointer-events: none;
 }
@@ -2107,10 +2110,10 @@ a:hover {
   height: 700px;
   border-radius: 50%;
   background: radial-gradient(circle, rgba(112, 220, 85, 0.44) 0%, rgba(45, 150, 28, 0.22) 42%, rgba(18, 70, 10, 0.08) 60%, transparent 75%);
-  filter: blur(var(--audio-glow-blur, 85px)) brightness(calc(1 + var(--audio-bass, 0) * 0.35));
+  filter: blur(50px);
   transform: scale(var(--audio-glow-scale, 1)) translateZ(0);
   opacity: var(--audio-glow-opacity, 0.55);
-  transition: transform 0.08s ease-out, opacity 0.08s ease-out, filter 0.08s ease-out;
+  transition: transform 0.08s ease-out, opacity 0.08s ease-out;
   pointer-events: none;
 }
 
@@ -2122,7 +2125,7 @@ a:hover {
   height: 540px;
   border-radius: 50%;
   background: radial-gradient(circle, rgba(35, 130, 20, 0.36) 0%, rgba(15, 60, 10, 0.18) 48%, transparent 70%);
-  filter: blur(calc(80px + var(--audio-bass, 0) * 20px));
+  filter: blur(46px);
   transform: scale(calc(1 + var(--audio-energy, 0) * 0.2)) translate(calc(var(--audio-bass, 0) * 16px), calc(var(--audio-mid, 0) * -10px));
   opacity: calc(0.35 + var(--audio-mid, 0) * 0.45);
   transition: transform 0.08s ease-out, opacity 0.08s ease-out;
@@ -2137,7 +2140,7 @@ a:hover {
   height: 440px;
   border-radius: 50%;
   background: radial-gradient(circle, rgba(112, 220, 85, 0.22) 0%, transparent 62%);
-  filter: blur(calc(80px + var(--audio-mid, 0) * 15px));
+  filter: blur(46px);
   transform: scale(calc(1 + var(--audio-mid, 0) * 0.18));
   opacity: calc(0.3 + var(--audio-energy, 0) * 0.4);
   transition: transform 0.08s ease-out, opacity 0.08s ease-out;
@@ -2153,7 +2156,7 @@ a:hover {
   height: 850px;
   border-radius: 50%;
   background: radial-gradient(ellipse 85% 65% at 75% 25%, rgba(112, 220, 85, 0.18) 0%, rgba(112, 220, 85, 0.06) 50%, transparent 80%);
-  filter: blur(calc(95px + var(--audio-bass, 0) * 25px));
+  filter: blur(55px);
   opacity: calc(0.12 + var(--audio-energy, 0) * 0.35);
   transform: scale(calc(0.96 + var(--audio-bass, 0) * 0.16));
   transition: transform 0.1s ease-out, opacity 0.1s ease-out;
@@ -3674,15 +3677,15 @@ a:hover {
 .artist-avatar-glow--reactive .artist-avatar-glow__outer {
   transform: scale(calc(1.04 + var(--audio-bass, 0) * 0.18));
   opacity: calc(0.55 + var(--audio-bass, 0) * 0.35);
-  filter: blur(calc(52px + var(--audio-bass, 0) * 22px));
-  transition: transform 0.12s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.14s ease-out, filter 0.14s ease-out;
+  filter: blur(52px);
+  transition: transform 0.12s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.14s ease-out;
 }
 
 .artist-avatar-glow--reactive .artist-avatar-glow__inner {
   transform: scale(calc(1.02 + var(--audio-energy, 0) * 0.14));
   opacity: calc(0.65 + var(--audio-energy, 0) * 0.3);
-  filter: blur(calc(32px + var(--audio-bass, 0) * 14px));
-  transition: transform 0.12s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.14s ease-out, filter 0.14s ease-out;
+  filter: blur(32px);
+  transition: transform 0.12s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.14s ease-out;
 }
 
 .artist-hero__avatar-frame {
@@ -3801,13 +3804,13 @@ a:hover {
 
 .artist-flow-banner--playing .artist-flow-banner__bottom-glow::before {
   transform: scaleY(calc(1.0 + var(--audio-bass, 0) * 0.35));
-  filter: blur(calc(30px + var(--audio-bass, 0) * 14px));
+  filter: blur(30px);
 }
 
 .artist-flow-banner--playing .artist-flow-banner__bottom-glow::after {
   opacity: calc(0.6 + var(--audio-energy, 0) * 0.3);
   transform: scale(calc(1.0 + var(--audio-bass, 0) * 0.15));
-  filter: blur(calc(38px + var(--audio-bass, 0) * 14px));
+  filter: blur(38px);
 }
 
 .artist-flow-banner__content {
@@ -4961,8 +4964,8 @@ a:hover {
   margin: 0;
   padding: 0;
   transition: width 0.28s cubic-bezier(0.4, 0, 0.2, 1),
-              opacity 0.22s ease,
-              background 0.18s ease;
+    opacity 0.22s ease,
+    background 0.18s ease;
 }
 
 .fullscreen-controls__volume:hover .fullscreen-volume-slider,
@@ -5007,7 +5010,7 @@ a:hover {
   flex-shrink: 0;
   z-index: 1;
   transition: margin 0.28s cubic-bezier(0.4, 0, 0.2, 1),
-              gap 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+    gap 0.28s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .fullscreen-controls__quality {
@@ -5019,7 +5022,7 @@ a:hover {
   opacity: 1;
   overflow: visible;
   transition: opacity 0.22s ease,
-              max-width 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+    max-width 0.28s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 /* Скрываем кнопку качества и сдвигаем центральные кнопки вправо при hover на громкости */

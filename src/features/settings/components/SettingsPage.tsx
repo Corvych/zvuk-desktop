@@ -1,12 +1,22 @@
+import { useState, useEffect } from 'react';
 import { useAuthStore } from '../../auth/authStore';
 import { usePlayerStore, type AudioQuality } from '../../player/playerStore';
 import { showToast } from '../../../components/Toast';
 import { useLyricsSettingsStore } from '../lyricsSettingsStore';
+import { useAppearanceSettingsStore } from '../appearanceSettingsStore';
+import { getCacheLimitMb, setCacheLimitMb } from '../../../api';
 
 const QUALITY_OPTIONS: { label: string; description: string; value: AudioQuality }[] = [
   { label: 'HiFi (FLAC)', description: 'Без потерь, ~1411 кбит/с', value: 'flac' },
   { label: 'HQ (Высокое)', description: 'MP3 320 кбит/с', value: 'high' },
   { label: 'SQ (Среднее)', description: 'MP3 192 кбит/с', value: 'mid' },
+];
+
+const CACHE_LIMIT_OPTIONS: { label: string; description: string; value: number }[] = [
+  { label: '250 МБ', description: 'Экономный — минимум нагрузки на память (~1–2 трека)', value: 250 },
+  { label: '500 МБ', description: 'Оптимальный (Рекомендуется) — стабильный буфер для Hi-Fi FLAC', value: 500 },
+  { label: '1024 МБ (1 ГБ)', description: 'Расширенный — запас для альбомов и непрерывных сессий (~10 треков)', value: 1024 },
+  { label: '2048 МБ (2 ГБ)', description: 'Максимальный — большой буфер для тяжелых плейлистов', value: 2048 },
 ];
 
 function formatExpirationDate(dateStr?: string | null): string | null {
@@ -35,6 +45,28 @@ export function SettingsPage() {
     setEnableLrclib,
     setPriority: setLyricsPriority,
   } = useLyricsSettingsStore();
+
+  const { enableVisualEffects, setEnableVisualEffects } = useAppearanceSettingsStore();
+
+  const [cacheLimit, setCacheLimit] = useState<number>(500);
+
+  useEffect(() => {
+    getCacheLimitMb()
+      .then((val) => {
+        if (val) setCacheLimit(val);
+      })
+      .catch((err) => console.warn('[Settings] Failed to fetch cache limit:', err));
+  }, []);
+
+  const handleCacheLimitChange = async (val: number) => {
+    try {
+      await setCacheLimitMb(val);
+      setCacheLimit(val);
+      showToast(`Лимит кэша установлен на ${val} МБ. Перезапустите приложение для применения`, 'info');
+    } catch {
+      showToast('Не удалось сохранить лимит кэша', 'error');
+    }
+  };
 
   const formattedExpiration = formatExpirationDate(user?.subscription?.expiration_date);
 
@@ -234,6 +266,82 @@ export function SettingsPage() {
         </div>
       </section>
 
+      {/* Cache & Memory Section */}
+      <section
+        style={{
+          padding: '20px',
+          background: 'var(--bg-secondary)',
+          borderRadius: 'var(--radius-lg)',
+          border: '1px solid var(--border-subtle)',
+          marginBottom: '16px',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '4px' }}>
+          <h4 style={{ margin: 0 }}>Кэш и оперативная память</h4>
+          <span
+            style={{
+              fontSize: '11px',
+              fontWeight: 700,
+              padding: '2px 8px',
+              borderRadius: '100px',
+              background: 'rgba(33, 160, 56, 0.15)',
+              color: 'var(--accent)',
+              border: '1px solid rgba(33, 160, 56, 0.3)',
+            }}
+          >
+            {cacheLimit >= 1024 ? `${(cacheLimit / 1024).toFixed(cacheLimit % 1024 === 0 ? 0 : 1)} ГБ` : `${cacheLimit} МБ`}
+          </span>
+        </div>
+        <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '14px' }}>
+          Ограничивает максимальный объем ОЗУ и кэша WebView2 под аудиотреки для предотвращения утечек памяти.
+        </p>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          {CACHE_LIMIT_OPTIONS.map((opt) => (
+            <CacheOption
+              key={opt.value}
+              label={opt.label}
+              description={opt.description}
+              value={opt.value}
+              isSelected={cacheLimit === opt.value}
+              onSelect={handleCacheLimitChange}
+            />
+          ))}
+        </div>
+        <p style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '12px', marginBottom: 0 }}>
+          💡 Изменение сохраняется в конфигурации приложения и применяется движком WebView2 при перезапуске.
+        </p>
+      </section>
+
+      {/* GPU & Performance Section */}
+      <section
+        style={{
+          padding: '20px',
+          background: 'var(--bg-secondary)',
+          borderRadius: 'var(--radius-lg)',
+          border: '1px solid var(--border-subtle)',
+          marginBottom: '16px',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '4px' }}>
+          <h4 style={{ margin: 0 }}>Производительность и видеокарта (GPU)</h4>
+          <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Графика</span>
+        </div>
+        <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '16px' }}>
+          Управление фоновыми анимациями и аудио-реактивными эффектами в плеере.
+        </p>
+
+        <ToggleRow
+          label="Северное сияние и аудио-реактивность"
+          description="WebGL процедурный фон Авроры и динамическая пульсация под бас. Отключите для максимальной разгрузки GPU и экономии батареи"
+          checked={enableVisualEffects}
+          badge={enableVisualEffects ? 'Включено' : 'Эко-режим'}
+          onChange={(val) => {
+            setEnableVisualEffects(val);
+            showToast(val ? 'Визуальные эффекты включены' : 'Эко-режим включен (нагрузка на GPU снята)', 'info');
+          }}
+        />
+      </section>
+
       {/* Lyrics Sources Section */}
       <section
         style={{
@@ -404,6 +512,66 @@ function QualityOption({
   value: AudioQuality;
   isSelected: boolean;
   onSelect: (q: AudioQuality) => void;
+}) {
+  return (
+    <div
+      role="radio"
+      aria-checked={isSelected}
+      tabIndex={0}
+      onClick={() => onSelect(value)}
+      onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && onSelect(value)}
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        padding: '10px 14px',
+        background: isSelected ? 'var(--accent-muted)' : 'transparent',
+        border: `1px solid ${isSelected ? 'var(--accent)' : 'var(--border-subtle)'}`,
+        borderRadius: 'var(--radius-md)',
+        cursor: 'pointer',
+        transition: 'all 0.15s',
+        userSelect: 'none',
+      }}
+    >
+      <div>
+        <div style={{ fontSize: '14px', fontWeight: 500, color: isSelected ? 'var(--accent-light)' : 'var(--text-primary)' }}>
+          {label}
+        </div>
+        <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{description}</div>
+      </div>
+      <div
+        style={{
+          width: '16px',
+          height: '16px',
+          borderRadius: '50%',
+          border: `2px solid ${isSelected ? 'var(--accent)' : 'var(--border)'}`,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          flexShrink: 0,
+          transition: 'border-color 0.15s',
+        }}
+      >
+        {isSelected && (
+          <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'var(--accent)' }} />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function CacheOption({
+  label,
+  description,
+  value,
+  isSelected,
+  onSelect,
+}: {
+  label: string;
+  description: string;
+  value: number;
+  isSelected: boolean;
+  onSelect: (val: number) => void;
 }) {
   return (
     <div

@@ -7,8 +7,21 @@ let analyserNode: AnalyserNode | null = null;
 export function getOrCreateAudio(): HTMLAudioElement {
   if (!audioInstance) {
     audioInstance = new Audio();
+    // Use metadata preload to avoid aggressive in-memory over-buffering
+    audioInstance.preload = 'metadata';
   }
   return audioInstance;
+}
+
+export function clearAudioSource(audio: HTMLAudioElement) {
+  try {
+    audio.pause();
+    audio.removeAttribute('src');
+    audio.src = '';
+    audio.load();
+  } catch (err) {
+    console.warn('[AudioService] Failed to clear audio source:', err);
+  }
 }
 
 export function setupAudioContext(audio: HTMLAudioElement): AnalyserNode | null {

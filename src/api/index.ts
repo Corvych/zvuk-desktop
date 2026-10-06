@@ -359,4 +359,11 @@ export const getArtistRadio = (
 export const getListeningHistory = (limit?: number, offset?: number) =>
   invoke<ListeningHistoryItem[]>('get_listening_history', { limit, offset });
 
+// Settings / Cache
+export const getCacheLimitMb = () =>
+  invoke<number>('get_cache_limit_mb');
+
+export const setCacheLimitMb = (limitMb: number) =>
+  invoke<void>('set_cache_limit_mb', { limitMb });
+
 

@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { usePlayerStore } from './playerStore';
 import { getStreamUrl } from '../../api';
-import { getOrCreateAudio, setupAudioContext, resumeAudioContext } from './audioService';
+import { getOrCreateAudio, setupAudioContext, resumeAudioContext, clearAudioSource } from './audioService';
 
 export function useAudioPlayer() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -61,7 +61,7 @@ export function useAudioPlayer() {
     audio.addEventListener('ended', onEnded);
 
     return () => {
-      audio.pause();
+      clearAudioSource(audio);
       audio.removeEventListener('timeupdate', onTimeUpdate);
       audio.removeEventListener('loadedmetadata', onLoadedMetadata);
       audio.removeEventListener('ended', onEnded);
@@ -90,9 +90,7 @@ export function useAudioPlayer() {
     // If changing to a different track, stop current playback and reset position
     if (activeTrackIdRef.current !== currentTrack.id) {
       if (!initialRestorePendingRef.current) {
-        audio.pause();
-        audio.removeAttribute('src');
-        audio.load();
+        clearAudioSource(audio);
         setProgress(0);
         clearSeekTarget();
       }

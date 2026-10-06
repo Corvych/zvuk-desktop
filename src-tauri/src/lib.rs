@@ -8,8 +8,12 @@ mod token_manager;
 use state::AppState;
 use tauri::Manager;
 
+pub use commands::settings::apply_cache_browser_args;
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    commands::settings::apply_cache_browser_args();
+
     env_logger::init();
 
     tauri::Builder::default()
@@ -75,6 +79,9 @@ pub fn run() {
             commands::recommendations::tune_flow,
             commands::recommendations::get_music_recommendations,
             commands::recommendations::get_listening_history,
+            // Settings
+            commands::settings::get_cache_limit_mb,
+            commands::settings::set_cache_limit_mb,
         ])
 
         .run(tauri::generate_context!())

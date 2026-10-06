@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { usePlayerStore } from '../features/player/playerStore';
+import { useAppearanceSettingsStore } from '../features/settings/appearanceSettingsStore';
 
 interface AuroraCanvasProps {
   className?: string;
@@ -114,20 +115,25 @@ function parseRgb(str: string, fallback: [number, number, number]): [number, num
 export function AuroraCanvas({ className }: AuroraCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const isPlaying = usePlayerStore((s) => s.isPlaying);
+  const enableVisualEffects = useAppearanceSettingsStore((s) => s.enableVisualEffects);
 
   useEffect(() => {
+    if (!enableVisualEffects) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
 
     let gl: WebGLRenderingContext | null = null;
     try {
-      gl = canvas.getContext('webgl', { alpha: true, antialias: true, premultipliedAlpha: false });
-    } catch (e) {
+      gl = canvas.getContext('webgl', {
+        alpha: true,
+        antialias: true,
+        premultipliedAlpha: false,
+      });
+    } catch {
       gl = null;
     }
 
     if (!gl) {
-      // If WebGL is not available, render graceful 2D canvas fallback
       return fallbackRender2D(canvas, () => isPlaying);
     }
 
@@ -148,7 +154,6 @@ export function AuroraCanvas({ className }: AuroraCanvasProps) {
 
     gl.useProgram(program);
 
-    // Quad geometry covering full clip space (-1 to +1)
     const positionBuffer = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
     gl.bufferData(
@@ -171,13 +176,14 @@ export function AuroraCanvas({ className }: AuroraCanvasProps) {
 
     let animId: number;
     let lastTime = performance.now();
+    let lastFrameTime = 0;
     let accumulatedTime = 0;
 
     const resize = () => {
       if (!canvas || !gl) return;
-      const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
-      const width = Math.floor(canvas.clientWidth * dpr);
-      const height = Math.floor(canvas.clientHeight * dpr);
+      const dpr = Math.min(window.devicePixelRatio || 1, 1.25);
+      const width = Math.max(1, Math.floor(canvas.clientWidth * dpr));
+      const height = Math.max(1, Math.floor(canvas.clientHeight * dpr));
       if (canvas.width !== width || canvas.height !== height) {
         canvas.width = width;
         canvas.height = height;
@@ -189,16 +195,27 @@ export function AuroraCanvas({ className }: AuroraCanvasProps) {
     resize();
 
     const render = (now: number) => {
+      animId = requestAnimationFrame(render);
+
+      // Skip render completely if canvas is hidden or tab is in background
+      if (!canvas.offsetParent || document.hidden) {
+        return;
+      }
+
+      // 60 FPS cap to prevent running at 144Hz/240Hz
+      if (now - lastFrameTime < 16) {
+        return;
+      }
+      lastFrameTime = now;
+
       const dt = Math.min((now - lastTime) / 1000, 0.1);
       lastTime = now;
 
-      // Speed up flow when music is playing, serene breathing when paused
       accumulatedTime += dt * (isPlaying ? 1.0 : 0.45);
 
       if (gl && canvas) {
         resize();
 
-        // Read CSS variables set by Monet theme or wave moods
         const rootStyle = getComputedStyle(document.documentElement);
         const rgb1Str = rootStyle.getPropertyValue('--wave-mood-rgb') || '112, 220, 85';
         const rgb2Str = rootStyle.getPropertyValue('--aurora-secondary-rgb') || '56, 239, 125';
@@ -220,8 +237,6 @@ export function AuroraCanvas({ className }: AuroraCanvasProps) {
 
         gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
       }
-
-      animId = requestAnimationFrame(render);
     };
 
     animId = requestAnimationFrame(render);
@@ -236,19 +251,31 @@ export function AuroraCanvas({ className }: AuroraCanvasProps) {
         gl.deleteBuffer(positionBuffer);
       }
     };
-  }, [isPlaying]);
+  }, [isPlaying, enableVisualEffects]);
+
+  if (!enableVisualEffects) {
+    return null;
+  }
 
   return <canvas ref={canvasRef} className={className} />;
 }
 
 function fallbackRender2D(canvas: HTMLCanvasElement, getIsPlaying: () => boolean) {
   const ctx = canvas.getContext('2d');
-  if (!ctx) return;
+  if (!ctx) return () => {};
 
   let animId: number;
+  let lastFrame = 0;
   let t = 0;
 
-  const render2D = () => {
+  const render2D = (now: number) => {
+    animId = requestAnimationFrame(render2D);
+
+    if (!canvas.offsetParent || document.hidden || now - lastFrame < 33) {
+      return;
+    }
+    lastFrame = now;
+
     t += getIsPlaying() ? 0.025 : 0.01;
     const w = canvas.width;
     const h = canvas.height;
@@ -260,22 +287,6 @@ function fallbackRender2D(canvas: HTMLCanvasElement, getIsPlaying: () => boolean
     grad.addColorStop(1, 'rgba(112, 220, 85, 0)');
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, w, h);
-
-    // Draw wavy silk folds
-    ctx.lineWidth = 2.5;
-    for (let i = 0; i < 6; i++) {
-      ctx.beginPath();
-      const xOffset = (w / 6) * i;
-      ctx.strokeStyle = `rgba(140, 240, 110, ${0.15 + (i % 2) * 0.1})`;
-      for (let y = 0; y < h; y += 10) {
-        const x = xOffset + Math.sin(y * 0.01 + t + i) * 35 + Math.cos(y * 0.02 - t) * 20;
-        if (y === 0) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
-      }
-      ctx.stroke();
-    }
-
-    animId = requestAnimationFrame(render2D);
   };
 
   animId = requestAnimationFrame(render2D);
