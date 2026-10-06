@@ -1,0 +1,28 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Capability for main window and login windows",
+  "windows": [
+    "main",
+    "sberid-login"
+  ],
+  "remote": {
+    "urls": [
+      "https://zvuk.com/*",
+      "https://*.zvuk.com/*",
+      "https://id.sber.ru/*",
+      "https://*.id.sber.ru/*"
+    ]
+  },
+  "permissions": [
+    "core:default",
+    "core:window:default",
+    "core:window:allow-close",
+    "core:window:allow-minimize",
+    "core:window:allow-maximize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-destroy",
+    "core:window:allow-set-focus",
+    "opener:default"
+  ]
+}

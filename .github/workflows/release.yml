@@ -1,0 +1,67 @@
+name: Release (Build & Publish)
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      prerelease:
+        description: 'Отметить как Pre-release'
+        required: true
+        type: boolean
+        default: true
+      draft:
+        description: 'Создать релиз как черновик (Draft)'
+        required: true
+        type: boolean
+        default: false
+
+jobs:
+  publish-tauri:
+    name: Build & Release (Windows)
+    permissions:
+      contents: write
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust Cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Tauri App & Publish Release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_type == 'tag' && github.ref_name || 'v__VERSION__' }}
+          releaseName: 'Zvuk Desktop v__VERSION__'
+          releaseBody: |
+            ### 🎵 Zvuk Desktop v__VERSION__ (Pre-Beta)
+
+            Свежая сборка десктоп-клиента для Windows.
+
+            #### 📦 Установка:
+            - Загрузите **`.msi`** (Windows Installer) или **`.exe`** (установщик NSIS) из блока Assets ниже.
+            - Запустите скачанный файл и выполните быструю установку.
+
+            #### 💬 Обратная связь:
+            При обнаружении багов или с идеями по улучшению, пожалуйста, пишите в [GitHub Issues](https://github.com/Corvych/zvuk-desktop/issues).
+          releaseDraft: ${{ github.event.inputs.draft || false }}
+          prerelease: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.prerelease || true }}
