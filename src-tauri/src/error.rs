@@ -29,6 +29,9 @@ pub enum AppError {
     #[error("Not found: {0}")]
     NotFound(String),
 
+    #[error("Доступ заблокирован сервисом Звук (HTTP 418 / WAF). Сервис блокирует подключение через VPN и зарубежные IP-адреса. Пожалуйста, отключите VPN или добавьте zvuk.com в исключения (direct routing).")]
+    VpnBlocked,
+
     #[error("{0}")]
     Internal(String),
 }

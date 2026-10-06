@@ -18,3 +18,8 @@ pub async fn window_toggle_maximize(window: tauri::Window) {
 pub async fn window_close(window: tauri::Window) {
     let _ = window.close();
 }
+
+#[tauri::command]
+pub async fn window_start_dragging(window: tauri::Window) {
+    let _ = window.start_dragging();
+}

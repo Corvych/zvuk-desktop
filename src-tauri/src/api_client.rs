@@ -7,7 +7,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 const GRAPHQL_URL: &str = "https://zvuk.com/api/v1/graphql";
-const TINY_API_URL: &str = "https://zvuk.com/api/tiny";
+const TINY_API_URL: &str = "https://zvuk.com/api/v2/tiny";
 const APP_USER_AGENT: &str =
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36";
 
@@ -37,6 +37,15 @@ pub fn format_image_url(src: &str, width: u32, height: u32) -> String {
     }
 }
 
+/// Check if an HTTP response was blocked by Zvuk's ServicePipe WAF / anti-bot / VPN geo-blocking.
+fn is_vpn_or_waf_blocked(status: reqwest::StatusCode, body: &str) -> bool {
+    status.as_u16() == 418
+        || body.contains("Servicepipe")
+        || body.contains("servicepipe")
+        || body.contains("Сайт не работает с включённым VPN")
+        || body.contains("Что-то мешает загрузке")
+        || (status.as_u16() == 403 && body.contains("<html"))
+}
 
 /// Helper to parse a GraphQL track object into our `Track` model.
 fn parse_track_from_value(item: &Value) -> Option<Track> {
@@ -276,12 +285,18 @@ impl ZvukApiClient {
 
         let url = "https://zvuk.com/desktop-data/api/cookieAPI";
         let res = self.http.get(url).headers(headers).send().await?;
-        if !res.status().is_success() {
-            log::warn!("[Zvuk API] Refresh failed with status: {}", res.status());
+        let status = res.status();
+        let body_text = res.text().await.unwrap_or_default();
+
+        if is_vpn_or_waf_blocked(status, &body_text) {
+            return Err(AppError::VpnBlocked);
+        }
+
+        if !status.is_success() {
+            log::warn!("[Zvuk API] Refresh failed with status: {}", status);
             return Err(AppError::Unauthorized);
         }
 
-        let body_text = res.text().await.unwrap_or_default();
         let json: Value = match serde_json::from_str(&body_text) {
             Ok(j) => j,
             Err(e) => {
@@ -357,10 +372,30 @@ impl ZvukApiClient {
         );
 
         let res = self.http.get(&url).headers(headers).send().await?;
-        let json: Value = res.json().await?;
+        let status = res.status();
+        let body_text = res.text().await.unwrap_or_default();
+
+        if is_vpn_or_waf_blocked(status, &body_text) {
+            return Err(AppError::VpnBlocked);
+        }
+
+        if !status.is_success() {
+            return Err(AppError::Api {
+                status: status.as_u16(),
+                message: format!("Failed to fetch guest token (HTTP {})", status),
+            });
+        }
+
+        let json: Value = serde_json::from_str(&body_text)
+            .map_err(|e| AppError::Internal(format!("Failed to parse guest token: {}", e)))?;
+
         let token = json
             .get("result")
-            .and_then(|r| r.get("token"))
+            .and_then(|r| {
+                r.get("profile")
+                    .and_then(|p| p.get("token"))
+                    .or_else(|| r.get("token"))
+            })
             .and_then(|t| t.as_str())
             .ok_or_else(|| AppError::Internal("Failed to extract guest token from Zvuk".into()))?;
 
@@ -457,6 +492,10 @@ impl ZvukApiClient {
         }
 
         let body_text = response.text().await.unwrap_or_default();
+        if is_vpn_or_waf_blocked(status, &body_text) {
+            return Err(AppError::VpnBlocked);
+        }
+
         let json: Value = match serde_json::from_str(&body_text) {
             Ok(j) => j,
             Err(e) => {
@@ -578,9 +617,30 @@ impl ZvukApiClient {
         let url = format!("{}/profile", TINY_API_URL);
 
         let response = self.http.get(&url).headers(headers).send().await?;
-        let data: Value = response.json().await?;
+        let status = response.status();
+        let body_text = response.text().await.unwrap_or_default();
 
-        let target = if let Some(res) = data.get("result").filter(|v| v.is_object()) {
+        if is_vpn_or_waf_blocked(status, &body_text) {
+            return Err(AppError::VpnBlocked);
+        }
+
+        if status == reqwest::StatusCode::UNAUTHORIZED {
+            return Err(AppError::Unauthorized);
+        }
+
+        if !status.is_success() {
+            return Err(AppError::Api {
+                status: status.as_u16(),
+                message: format!("Profile request failed with status {}", status),
+            });
+        }
+
+        let data: Value = serde_json::from_str(&body_text)
+            .map_err(|e| AppError::Internal(format!("Failed to parse profile JSON: {}", e)))?;
+
+        let target = if let Some(p) = data.get("result").and_then(|r| r.get("profile")).filter(|v| v.is_object()) {
+            p
+        } else if let Some(res) = data.get("result").filter(|v| v.is_object()) {
             res
         } else {
             &data

@@ -128,15 +128,15 @@ pub async fn open_sber_id_login(app: AppHandle) -> Result<(), AppError> {
                         }
                     } catch(e) {}
 
-                    const res = await fetch('/api/tiny/profile', {
+                    const res = await fetch('/api/v2/tiny/profile', {
                         credentials: 'include',
                         headers: { 'Accept': 'application/json, text/plain, */*' }
                     });
 
                     if (res.ok) {
                         const data = await res.json();
-                        if (data && data.result && data.result.token) {
-                            const r = data.result;
+                        const r = data?.result?.profile || data?.result;
+                        if (r && r.token) {
                             if (r.is_anonymous !== true && (r.is_registered === true || r.name || r.username || r.external_profile)) {
                                 onAuthSuccess(r.token, cookieData);
                             }
@@ -181,7 +181,13 @@ pub async fn open_sber_id_login(app: AppHandle) -> Result<(), AppError> {
     WebviewWindowBuilder::new(&app, "sberid-login", WebviewUrl::External(login_url))
         .title("Вход через Сбер ID — Звук")
         .inner_size(540.0, 720.0)
+        .min_inner_size(420.0, 560.0)
         .center()
+        .decorations(true)
+        .resizable(true)
+        .maximizable(true)
+        .minimizable(true)
+        .closable(true)
         .initialization_script(script)
         .on_navigation(move |url| {
             let url_str = url.as_str();
@@ -224,11 +230,11 @@ pub async fn open_sber_id_login(app: AppHandle) -> Result<(), AppError> {
                                         if (cRes.ok) cookieData = await cRes.json();
                                     } catch(e) {}
 
-                                    const res = await fetch('/api/tiny/profile', { credentials: 'include' });
+                                    const res = await fetch('/api/v2/tiny/profile', { credentials: 'include' });
                                     if (res.ok) {
                                         const d = await res.json();
-                                        if (d && d.result && d.result.token) {
-                                            const r = d.result;
+                                        const r = d?.result?.profile || d?.result;
+                                        if (r && r.token) {
                                             if (r.is_anonymous !== true && (r.is_registered === true || r.name || r.username || r.external_profile)) {
                                                 let cb = 'http://127.0.0.1:14202/callback?token=' + encodeURIComponent(r.token);
                                                 if (cookieData) {

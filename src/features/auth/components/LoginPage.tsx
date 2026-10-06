@@ -39,13 +39,29 @@ export function LoginPage() {
     }
   };
 
+  const handleStartDragging = (e: React.MouseEvent) => {
+    if (e.button === 0 && (e.target as HTMLElement).tagName !== 'BUTTON' && !(e.target as HTMLElement).closest('button') && !(e.target as HTMLElement).closest('input')) {
+      getCurrentWindow().startDragging().catch(() => invoke('window_start_dragging'));
+    }
+  };
+
   return (
-    <div className="login-page" style={{ position: 'relative' }}>
+    <div
+      className="login-page"
+      style={{ position: 'relative' }}
+      onMouseDown={(e) => {
+        if (e.button === 0 && e.target === e.currentTarget) {
+          getCurrentWindow().startDragging().catch(() => invoke('window_start_dragging'));
+        }
+      }}
+    >
       {/* Window Controls & Drag Area */}
       {!showLoginModal && (
         <div
-          className="titlebar-area"
+          className="titlebar"
           data-tauri-drag-region
+          onMouseDown={handleStartDragging}
+          onDoubleClick={handleToggleMaximize}
           style={{
             position: 'absolute',
             top: 0,
@@ -54,17 +70,45 @@ export function LoginPage() {
             height: '40px',
             display: 'flex',
             alignItems: 'center',
-            justifyContent: 'flex-end',
-            padding: '0 8px',
-            zIndex: 100,
+            justifyContent: 'space-between',
+            padding: '0 12px',
+            zIndex: 1000,
+            pointerEvents: 'auto',
           }}
         >
-          <div className="titlebar__controls">
+          {/* Brand/Drag region */}
+          <div
+            data-tauri-drag-region
+            style={{
+              flex: 1,
+              height: '100%',
+              display: 'flex',
+              alignItems: 'center',
+              userSelect: 'none',
+              cursor: 'default',
+            }}
+          >
+            <span style={{ fontSize: '12px', color: 'var(--text-muted)', fontWeight: 600, paddingLeft: '4px' }}>
+              Звук
+            </span>
+          </div>
+
+          <div
+            className="titlebar__controls"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '2px',
+              pointerEvents: 'auto',
+              zIndex: 1001,
+            }}
+          >
             <button
               type="button"
               className="titlebar__control-btn"
               onClick={handleMinimize}
               title="Свернуть"
+              style={{ pointerEvents: 'auto' }}
             >
               <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
                 <path d="M2 6H10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
@@ -75,6 +119,7 @@ export function LoginPage() {
               className="titlebar__control-btn"
               onClick={handleToggleMaximize}
               title="Развернуть"
+              style={{ pointerEvents: 'auto' }}
             >
               <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
                 <rect x="2" y="2" width="8" height="8" rx="1" stroke="currentColor" strokeWidth="1.2" />
@@ -85,6 +130,7 @@ export function LoginPage() {
               className="titlebar__control-btn titlebar__control-btn--close"
               onClick={handleClose}
               title="Закрыть"
+              style={{ pointerEvents: 'auto' }}
             >
               <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
                 <path d="M2 2L10 10M10 2L2 10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />

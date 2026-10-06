@@ -29,6 +29,7 @@ pub fn run() {
             commands::window::window_minimize,
             commands::window::window_toggle_maximize,
             commands::window::window_close,
+            commands::window::window_start_dragging,
             // Auth & Sber ID
             commands::auth::login_with_token,
             commands::auth::open_sber_id_login,

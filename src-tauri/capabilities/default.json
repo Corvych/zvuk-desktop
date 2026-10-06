@@ -23,6 +23,7 @@
     "core:window:allow-toggle-maximize",
     "core:window:allow-destroy",
     "core:window:allow-set-focus",
+    "core:window:allow-start-dragging",
     "opener:default"
   ]
 }
