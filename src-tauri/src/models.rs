@@ -276,6 +276,14 @@ pub struct ArtistRelease {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ArtistReleasesPage {
+    pub releases: Vec<ArtistRelease>,
+    pub has_more_releases: bool,
+    pub end_cursor: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RelatedArtist {
     pub id: i64,
     pub title: String,
@@ -311,11 +319,42 @@ pub struct Playlist {
     pub title: String,
     pub description: Option<String>,
     pub cover_url: Option<String>,
+    #[serde(default)]
+    pub cover_urls: Option<Vec<String>>,
     pub track_count: u32,
     pub duration: u32, // total seconds
     pub is_editable: bool,
+    #[serde(default)]
+    pub is_public: Option<bool>,
     pub owner: Option<String>,
     pub tracks: Option<Vec<Track>>,
+    pub track_ids: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShortPlaylist {
+    pub id: String,
+    pub title: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShortPlaylistsPage {
+    pub end_cursor: Option<String>,
+    pub has_next_page: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShortPlaylistsResult {
+    pub playlists: Vec<ShortPlaylist>,
+    pub page: ShortPlaylistsPage,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlaylistItemInput {
+    pub item_id: String,
+    pub r#type: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

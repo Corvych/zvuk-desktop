@@ -6,3 +6,4 @@ pub mod favourites;
 pub mod recommendations;
 pub mod window;
 pub mod settings;
+pub mod discord;

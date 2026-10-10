@@ -7,6 +7,10 @@ import { formatTime } from '../../../lib/formatters';
 import { showToast } from '../../../components/Toast';
 import { ArtistLinks } from '../../../components/ArtistLinks';
 import { LikeButton } from '../../../components/LikeButton';
+import { ShareIcon } from '../../../components/ShareIcon';
+import { fetchUnifiedLyrics, probeAllSources } from '../lyricsService';
+import { useVolumeWheel } from '../useVolumeWheel';
+import { usePlaylistModalStore } from '../../playlists/playlistModalStore';
 
 
 const QUALITY_LIST: { id: AudioQuality; badge: string; label: string; desc: string }[] = [
@@ -40,20 +44,26 @@ export function PlayerBar() {
 
   const navigate = useNavigate();
   const [showQualityMenu, setShowQualityMenu] = useState(false);
+  const [isMoreMenuOpen, setIsMoreMenuOpen] = useState(false);
   const qualityMenuRef = useRef<HTMLDivElement>(null);
-
+  const moreMenuRef = useRef<HTMLDivElement>(null);
+  const volumeControlRef = useVolumeWheel();
 
   useEffect(() => {
-    if (!showQualityMenu) return;
+    if (!showQualityMenu && !isMoreMenuOpen) return;
 
     const handleClickOutside = (e: MouseEvent) => {
       if (qualityMenuRef.current && !qualityMenuRef.current.contains(e.target as Node)) {
         setShowQualityMenu(false);
       }
+      if (moreMenuRef.current && !moreMenuRef.current.contains(e.target as Node)) {
+        setIsMoreMenuOpen(false);
+      }
     };
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         setShowQualityMenu(false);
+        setIsMoreMenuOpen(false);
       }
     };
 
@@ -63,7 +73,15 @@ export function PlayerBar() {
       document.removeEventListener('mousedown', handleClickOutside);
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [showQualityMenu]);
+  }, [showQualityMenu, isMoreMenuOpen]);
+
+  // Prefetch lyrics & source probe in background for current playing track so fullscreen opens instantly
+  useEffect(() => {
+    if (currentTrack) {
+      fetchUnifiedLyrics(currentTrack).catch(() => {});
+      probeAllSources(currentTrack).catch(() => {});
+    }
+  }, [currentTrack?.id]);
 
   const isLiked = useFavouritesStore((s) => s.isLiked(currentTrack?.id));
   const toggleLikeTrack = useFavouritesStore((s) => s.toggleLikeTrack);
@@ -123,6 +141,106 @@ export function PlayerBar() {
               title={isLiked ? 'Удалить из любимых (L)' : 'Добавить в любимое (L)'}
               size={18}
             />
+
+            <div style={{ position: 'relative' }} ref={moreMenuRef}>
+              <button
+                type="button"
+                className="player-bar__btn"
+                onClick={() => setIsMoreMenuOpen((p) => !p)}
+                title="Дополнительно"
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                  <circle cx="5" cy="12" r="2" />
+                  <circle cx="12" cy="12" r="2" />
+                  <circle cx="19" cy="12" r="2" />
+                </svg>
+              </button>
+
+              {isMoreMenuOpen && (
+                <div className="player-bar-dropdown-menu">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsMoreMenuOpen(false);
+                      navigator.clipboard.writeText(`https://zvuk.com/track/${currentTrack.id}`);
+                      showToast('Ссылка на трек скопирована', 'success');
+                    }}
+                  >
+                    <ShareIcon size={16} />
+                    Поделиться треком
+                  </button>
+                  {currentTrack.album_id && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsMoreMenuOpen(false);
+                        navigator.clipboard.writeText(`https://zvuk.com/release/${currentTrack.album_id}`);
+                        showToast('Ссылка на альбом скопирована', 'success');
+                      }}
+                    >
+                      <ShareIcon size={16} />
+                      Поделиться альбомом
+                    </button>
+                  )}
+                  {(currentTrack.artist_id || currentTrack.artists?.[0]?.id) && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsMoreMenuOpen(false);
+                        const aId = currentTrack.artist_id ?? currentTrack.artists?.[0]?.id;
+                        navigator.clipboard.writeText(`https://zvuk.com/artist/${aId}`);
+                        showToast('Ссылка на артиста скопирована', 'success');
+                      }}
+                    >
+                      <ShareIcon size={16} />
+                      Поделиться артистом
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsMoreMenuOpen(false);
+                      usePlaylistModalStore.getState().openAddToPlaylist(currentTrack);
+                    }}
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <line x1="12" y1="5" x2="12" y2="19" />
+                      <line x1="5" y1="12" x2="19" y2="12" />
+                    </svg>
+                    Добавить в плейлист
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsMoreMenuOpen(false);
+                      navigator.clipboard.writeText(`${currentTrack.artist} - ${currentTrack.title}`);
+                      showToast('Название трека скопировано', 'info');
+                    }}
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                    </svg>
+                    Скопировать название
+                  </button>
+                  {currentTrack.album_id && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsMoreMenuOpen(false);
+                        navigate(`/album/${currentTrack.album_id}`);
+                      }}
+                    >
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <circle cx="12" cy="12" r="10" />
+                        <circle cx="12" cy="12" r="3" />
+                      </svg>
+                      Перейти к альбому
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
           </>
         ) : (
           <div className="player-bar__info">
@@ -272,8 +390,16 @@ export function PlayerBar() {
           )}
         </div>
 
-        <div className="volume-control">
-          <button className="player-bar__btn" onClick={toggleMute} title="Громкость">
+        <div
+          ref={volumeControlRef}
+          className="volume-control"
+          title={`Громкость: ${Math.round((isMuted ? 0 : volume) * 100)}% (прокрутка колёсиком мыши)`}
+        >
+          <button
+            className="player-bar__btn"
+            onClick={toggleMute}
+            title={isMuted ? 'Включить звук' : 'Выключить звук (колёсико для громкости)'}
+          >
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
               {isMuted || volume === 0 ? (
                 <>
@@ -302,6 +428,7 @@ export function PlayerBar() {
             step="0.01"
             value={isMuted ? 0 : volume}
             onChange={handleVolumeChange}
+            title={`Громкость: ${Math.round((isMuted ? 0 : volume) * 100)}% (прокрутка колёсиком мыши)`}
           />
         </div>
 

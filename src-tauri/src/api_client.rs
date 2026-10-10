@@ -12,7 +12,8 @@ const APP_USER_AGENT: &str =
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36";
 
 /// Formats image source paths returned by Zvuk GraphQL into full resized CDN URLs.
-pub fn format_image_url(src: &str, width: u32, height: u32) -> String {
+/// Size parameter values: "small" (300x300), "medium" (600x600), "large" (900x900).
+pub fn format_image_url(src: &str, width: u32, _height: u32) -> String {
     if src.is_empty() {
         return String::new();
     }
@@ -21,19 +22,36 @@ pub fn format_image_url(src: &str, width: u32, height: u32) -> String {
     } else {
         src.to_string()
     };
-    if base.contains("{size}") {
-        base.replace("{size}", &format!("{}x{}", width, height))
-    } else if base.starts_with("https://obs-")
-        || base.ends_with(".png")
-        || base.ends_with(".jpg")
-        || base.ends_with(".jpeg")
-        || base.ends_with(".webp")
-    {
-        base
-    } else if base.contains('?') {
-        format!("{}&size={}x{}", base, width, height)
+    let size_val = if width <= 300 {
+        "small"
+    } else if width <= 600 {
+        "medium"
     } else {
-        format!("{}?size={}x{}", base, width, height)
+        "large"
+    };
+
+    if base.contains("{size}") {
+        base.replace("{size}", size_val)
+    } else if base.contains("size=") {
+        let mut parts = base.split("size=");
+        if let Some(prefix) = parts.next() {
+            if let Some(rest) = parts.next() {
+                let remainder = if let Some(amp_idx) = rest.find('&') {
+                    &rest[amp_idx..]
+                } else {
+                    ""
+                };
+                format!("{}size={}{}", prefix, size_val, remainder)
+            } else {
+                base
+            }
+        } else {
+            base
+        }
+    } else if base.contains('?') {
+        format!("{}&size={}", base, size_val)
+    } else {
+        format!("{}?size={}", base, size_val)
     }
 }
 
@@ -962,16 +980,24 @@ impl ZvukApiClient {
                         .and_then(|d| d.as_u64())
                         .unwrap_or(0) as u32;
 
+                    let is_public = item
+                        .get("isPublic")
+                        .or_else(|| item.get("is_public"))
+                        .and_then(|v| v.as_bool());
+
                     playlists.push(Playlist {
                         id,
                         title,
                         description,
                         cover_url,
+                        cover_urls: None,
                         track_count: 0,
                         duration,
                         is_editable: false,
+                        is_public,
                         owner: None,
                         tracks: None,
+                        track_ids: None,
                     });
                 }
             }
@@ -1063,15 +1089,17 @@ impl ZvukApiClient {
             }
         "#;
 
-        let data = self
-            .graphql(gql, serde_json::json!({ "ids": ids }))
-            .await?;
-
         let mut tracks = Vec::new();
-        if let Some(items) = data.get("getTracks").and_then(|t| t.as_array()) {
-            for it in items {
-                if let Some(track) = parse_track_from_value(it) {
-                    tracks.push(track);
+        for chunk in ids.chunks(50) {
+            let data = self
+                .graphql(gql, serde_json::json!({ "ids": chunk }))
+                .await?;
+
+            if let Some(items) = data.get("getTracks").and_then(|t| t.as_array()) {
+                for it in items {
+                    if let Some(track) = parse_track_from_value(it) {
+                        tracks.push(track);
+                    }
                 }
             }
         }
@@ -1100,6 +1128,7 @@ impl ZvukApiClient {
                     duration
                     image { src }
                     userId
+                    isPublic
                     tracks { id }
                 }
             }
@@ -1130,11 +1159,35 @@ impl ZvukApiClient {
             })
             .unwrap_or_default();
 
-        let tracks = if !track_ids.is_empty() {
-            Some(self.get_tracks_by_ids(&track_ids).await.unwrap_or_default())
+        let initial_ids = &track_ids[..50.min(track_ids.len())];
+        let tracks = if !initial_ids.is_empty() {
+            Some(self.get_tracks_by_ids(initial_ids).await.unwrap_or_default())
         } else {
             None
         };
+
+        let is_public = pl_val
+            .get("isPublic")
+            .or_else(|| pl_val.get("is_public"))
+            .and_then(|v| v.as_bool());
+
+        let cover_urls: Vec<String> = tracks
+            .as_ref()
+            .map(|ts| {
+                ts.iter()
+                    .take(4)
+                    .filter_map(|t| t.cover_url.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let explicit_cover = pl_val
+            .get("image")
+            .and_then(|img| img.get("src"))
+            .and_then(|s| s.as_str())
+            .map(|src| format_image_url(src, 300, 300));
+
+        let cover_url = explicit_cover.or_else(|| cover_urls.first().cloned());
 
         Ok(Playlist {
             id,
@@ -1147,23 +1200,25 @@ impl ZvukApiClient {
                 .get("description")
                 .and_then(|d| d.as_str())
                 .map(|s| s.to_string()),
-            cover_url: pl_val
-                .get("image")
-                .and_then(|img| img.get("src"))
-                .and_then(|s| s.as_str())
-                .map(|src| format_image_url(src, 300, 300)),
+            cover_url,
+            cover_urls: if cover_urls.is_empty() { None } else { Some(cover_urls) },
             track_count: track_ids.len() as u32,
             duration: pl_val
                 .get("duration")
                 .and_then(|d| d.as_u64())
                 .unwrap_or(0) as u32,
             is_editable: false,
-            owner: pl_val.get("userId").and_then(|u| match u {
-                Value::Number(n) => Some(n.to_string()),
-                Value::String(s) => Some(s.clone()),
-                _ => None,
-            }),
+            is_public,
+            owner: pl_val
+                .get("userId")
+                .or_else(|| pl_val.get("user").and_then(|u| u.get("id")))
+                .and_then(|u| match u {
+                    Value::Number(n) => Some(n.to_string()),
+                    Value::String(s) => Some(s.clone()),
+                    _ => None,
+                }),
             tracks,
+            track_ids: Some(track_ids),
         })
     }
 
@@ -1182,6 +1237,7 @@ impl ZvukApiClient {
                     duration
                     image { src }
                     userId
+                    isPublic
                     tracks { id }
                 }
             }
@@ -1191,7 +1247,7 @@ impl ZvukApiClient {
             .graphql(gql, serde_json::json!({ "ids": ids }))
             .await?;
 
-        let mut playlists = Vec::new();
+        let mut raw_list = Vec::new();
         if let Some(items) = data.get("getPlaylists").and_then(|p| p.as_array()) {
             for pl_val in items {
                 if let Some(id) = pl_val.get("id").and_then(|i| match i {
@@ -1199,44 +1255,119 @@ impl ZvukApiClient {
                     Value::String(s) => s.parse().ok(),
                     _ => None,
                 }) {
-                    let track_count = pl_val
+                    let track_ids: Vec<String> = pl_val
                         .get("tracks")
                         .and_then(|t| t.as_array())
-                        .map(|a| a.len() as u32)
-                        .unwrap_or(0);
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|t| {
+                                    t.get("id").and_then(|i| match i {
+                                        Value::Number(n) => Some(n.to_string()),
+                                        Value::String(s) => Some(s.clone()),
+                                        _ => None,
+                                    })
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
 
-                    playlists.push(Playlist {
-                        id,
-                        title: pl_val
-                            .get("title")
-                            .and_then(|t| t.as_str())
-                            .unwrap_or("Плейлист")
-                            .to_string(),
-                        description: pl_val
-                            .get("description")
-                            .and_then(|d| d.as_str())
-                            .map(|s| s.to_string()),
-                        cover_url: pl_val
-                            .get("image")
-                            .and_then(|img| img.get("src"))
-                            .and_then(|s| s.as_str())
-                            .map(|src| format_image_url(src, 300, 300)),
-                        track_count,
-                        duration: pl_val
-                            .get("duration")
-                            .and_then(|d| d.as_u64())
-                            .unwrap_or(0) as u32,
-                        is_editable: false,
-                        owner: pl_val.get("userId").and_then(|u| match u {
+                    let track_count = track_ids.len() as u32;
+
+                    let is_public = pl_val
+                        .get("isPublic")
+                        .or_else(|| pl_val.get("is_public"))
+                        .and_then(|v| v.as_bool());
+
+                    let title = pl_val
+                        .get("title")
+                        .and_then(|t| t.as_str())
+                        .unwrap_or("Плейлист")
+                        .to_string();
+
+                    let description = pl_val
+                        .get("description")
+                        .and_then(|d| d.as_str())
+                        .map(|s| s.to_string());
+
+                    let cover_url = pl_val
+                        .get("image")
+                        .and_then(|img| img.get("src"))
+                        .and_then(|s| s.as_str())
+                        .map(|src| format_image_url(src, 300, 300));
+
+                    let duration = pl_val
+                        .get("duration")
+                        .and_then(|d| d.as_u64())
+                        .unwrap_or(0) as u32;
+
+                    let owner = pl_val
+                        .get("userId")
+                        .or_else(|| pl_val.get("user").and_then(|u| u.get("id")))
+                        .and_then(|u| match u {
                             Value::Number(n) => Some(n.to_string()),
                             Value::String(s) => Some(s.clone()),
                             _ => None,
-                        }),
-                        tracks: None,
-                    });
+                        });
+
+                    raw_list.push((id, title, description, cover_url, track_count, duration, is_public, owner, track_ids));
                 }
             }
         }
+
+        // Collect up to first 4 track IDs for playlists that need track covers
+        let mut needed_ids = Vec::new();
+        for (_, _, _, cover_url, _, _, _, _, track_ids) in &raw_list {
+            if cover_url.is_none() {
+                for tid in track_ids.iter().take(4) {
+                    if !needed_ids.contains(tid) {
+                        needed_ids.push(tid.clone());
+                    }
+                }
+            }
+        }
+
+        let tracks_map: std::collections::HashMap<String, Track> = if !needed_ids.is_empty() {
+            self.get_tracks_by_ids(&needed_ids)
+                .await
+                .unwrap_or_default()
+                .into_iter()
+                .map(|t| (t.id.to_string(), t))
+                .collect()
+        } else {
+            std::collections::HashMap::new()
+        };
+
+        let mut playlists = Vec::with_capacity(raw_list.len());
+        for (id, title, description, explicit_cover, track_count, duration, is_public, owner, track_ids) in raw_list {
+            let first_tracks: Vec<Track> = track_ids
+                .iter()
+                .take(4)
+                .filter_map(|tid| tracks_map.get(tid).cloned())
+                .collect();
+
+            let cover_urls: Vec<String> = first_tracks
+                .iter()
+                .filter_map(|t| t.cover_url.clone())
+                .collect();
+
+            let cover_url = explicit_cover.or_else(|| cover_urls.first().cloned());
+
+            playlists.push(Playlist {
+                id,
+                title,
+                description,
+                cover_url,
+                cover_urls: if cover_urls.is_empty() { None } else { Some(cover_urls) },
+                track_count,
+                duration,
+                is_editable: false,
+                is_public,
+                owner,
+                tracks: if first_tracks.is_empty() { None } else { Some(first_tracks) },
+                track_ids: Some(track_ids),
+            });
+        }
+
         Ok(playlists)
     }
 
@@ -1365,11 +1496,14 @@ impl ZvukApiClient {
             title: req.title.clone(),
             description: req.description.clone(),
             cover_url: None,
+            cover_urls: None,
             track_count: 0,
             duration: 0,
             is_editable: true,
+            is_public: Some(false),
             owner: None,
             tracks: Some(Vec::new()),
+            track_ids: Some(Vec::new()),
         })
     }
 
@@ -1386,27 +1520,153 @@ impl ZvukApiClient {
         Ok(())
     }
 
+    pub async fn get_user_short_playlists(
+        &self,
+        limit: u32,
+        offset: Option<String>,
+    ) -> Result<ShortPlaylistsResult, AppError> {
+        let gql = r#"
+            query getProfilesShortPlaylistsInfo($limit: Int = 6, $offset: String = null) {
+              getUserPlaylists {
+                paginated(pagination: {first: $limit, after: $offset}) {
+                  playlists {
+                    id
+                    title
+                  }
+                  page {
+                    endCursor
+                    hasNextPage
+                  }
+                }
+              }
+            }
+        "#;
+        let offset_val = offset.unwrap_or_default();
+        let data = self
+            .graphql_op(
+                gql,
+                serde_json::json!({
+                    "limit": limit,
+                    "offset": offset_val,
+                }),
+                Some("getProfilesShortPlaylistsInfo"),
+            )
+            .await?;
+
+        let paginated = data
+            .get("getUserPlaylists")
+            .and_then(|u| u.get("paginated"));
+
+        let playlists = paginated
+            .and_then(|p| p.get("playlists"))
+            .and_then(|arr| arr.as_array())
+            .map(|list| {
+                list.iter()
+                    .filter_map(|item| {
+                        let id = match item.get("id") {
+                            Some(Value::String(s)) => s.clone(),
+                            Some(Value::Number(n)) => n.to_string(),
+                            _ => return None,
+                        };
+                        let title = item
+                            .get("title")
+                            .and_then(|t| t.as_str())
+                            .unwrap_or("Плейлист")
+                            .to_string();
+                        Some(ShortPlaylist { id, title })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let page_val = paginated.and_then(|p| p.get("page"));
+        let end_cursor = page_val
+            .and_then(|p| p.get("endCursor"))
+            .and_then(|c| c.as_str())
+            .map(|s| s.to_string());
+        let has_next_page = page_val
+            .and_then(|p| p.get("hasNextPage"))
+            .and_then(|h| h.as_bool())
+            .unwrap_or(false);
+
+        Ok(ShortPlaylistsResult {
+            playlists,
+            page: ShortPlaylistsPage {
+                end_cursor,
+                has_next_page,
+            },
+        })
+    }
+
+    pub async fn add_items_to_playlist(
+        &self,
+        id: &str,
+        items: Vec<PlaylistItemInput>,
+    ) -> Result<(), AppError> {
+        let gql = r#"
+            mutation addItems($id: ID!, $items: [PlaylistItem!] = []) {
+              playlist {
+                addItemsV1(id: $id, items: $items) {
+                  id
+                }
+              }
+            }
+        "#;
+        self.graphql_op(
+            gql,
+            serde_json::json!({
+                "id": id,
+                "items": items,
+            }),
+            Some("addItems"),
+        )
+        .await?;
+        Ok(())
+    }
+
+    pub async fn update_playlist(
+        &self,
+        id: &str,
+        name: &str,
+        is_public: bool,
+        items: Vec<PlaylistItemInput>,
+    ) -> Result<(), AppError> {
+        let gql = r#"
+            mutation updatePlaylist($id: ID!, $isPublic: Boolean!, $items: [PlaylistItem!] = [], $name: String!) {
+              playlist {
+                updateV1(id: $id, isPublic: $isPublic, items: $items, name: $name) {
+                  id
+                }
+              }
+            }
+        "#;
+        self.graphql_op(
+            gql,
+            serde_json::json!({
+                "id": id,
+                "isPublic": is_public,
+                "name": name,
+                "items": items,
+            }),
+            Some("updatePlaylist"),
+        )
+        .await?;
+        Ok(())
+    }
+
     pub async fn add_track_to_playlist(
         &self,
         playlist_id: i64,
         track_id: i64,
     ) -> Result<(), AppError> {
-        let gql = r#"
-            mutation addTracksToPlaylist($id: ID!, $items: [PlaylistItem!]!) {
-                playlist {
-                    addItems(id: $id, items: $items)
-                }
-            }
-        "#;
-        self.graphql(
-            gql,
-            serde_json::json!({
-                "id": playlist_id.to_string(),
-                "items": [{ "id": track_id.to_string(), "type": "track" }]
-            }),
+        self.add_items_to_playlist(
+            &playlist_id.to_string(),
+            vec![PlaylistItemInput {
+                item_id: track_id.to_string(),
+                r#type: "track".to_string(),
+            }],
         )
-        .await?;
-        Ok(())
+        .await
     }
 
     pub async fn remove_track_from_playlist(
@@ -1749,7 +2009,7 @@ impl ZvukApiClient {
       src
       palette
     }
-    releasesPage: getCursorReleases(limit: 11, cursor: null) {
+    releasesPage: getCursorReleases(limit: 100, cursor: null) {
       pageInfo: page_info {
         endCursor
         hasNextPage
@@ -1796,7 +2056,7 @@ impl ZvukApiClient {
       }
       __typename
     }
-    popularTracks(limit: 5, offset: 0) @include(if: $withPopularTracks) {
+    popularTracks(limit: 20, offset: 0) @include(if: $withPopularTracks) {
       ...PlayerTrackData
     }
     allTracks: popularTracks(limit: 200, offset: 0) {
@@ -2067,6 +2327,111 @@ fragment PlayerTrackData on Track {
             has_more_releases,
             end_cursor,
             related_artists,
+        })
+    }
+
+    /// Fetches a paginated list of artist releases using cursor and limit.
+    pub async fn get_artist_releases(
+        &self,
+        artist_id: i64,
+        cursor: Option<String>,
+        limit: Option<u32>,
+    ) -> Result<ArtistReleasesPage, AppError> {
+        let query = r#"query artistReleases($ids: [ID!]!, $limit: Int = 50, $cursor: String) {
+  getArtists(ids: $ids) {
+    id
+    releasesPage: getCursorReleases(limit: $limit, cursor: $cursor) {
+      pageInfo: page_info {
+        endCursor
+        hasNextPage
+      }
+      releases {
+        id
+        title
+        date
+        type
+        image {
+          src
+          palette
+        }
+        mark
+        explicit
+      }
+    }
+  }
+}"#;
+
+        let variables = serde_json::json!({
+            "ids": artist_id.to_string(),
+            "limit": limit.unwrap_or(50),
+            "cursor": cursor,
+        });
+
+        let data = self
+            .graphql_op(query, variables, Some("artistReleases"))
+            .await?;
+
+        let artist_obj = data
+            .get("getArtists")
+            .and_then(|a| a.as_array())
+            .and_then(|arr| arr.first())
+            .ok_or_else(|| AppError::NotFound(format!("Артист {} не найден", artist_id)))?;
+
+        let releases_page = artist_obj.get("releasesPage");
+        let end_cursor = releases_page
+            .and_then(|p| p.get("pageInfo"))
+            .and_then(|pi| pi.get("endCursor"))
+            .and_then(|c| c.as_str())
+            .map(|s| s.to_string());
+        let has_more_releases = releases_page
+            .and_then(|p| p.get("pageInfo"))
+            .and_then(|pi| pi.get("hasNextPage"))
+            .and_then(|b| b.as_bool())
+            .unwrap_or(false);
+
+        let releases = releases_page
+            .and_then(|p| p.get("releases"))
+            .and_then(|r| r.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|r| {
+                        let rid: i64 = match r.get("id")? {
+                            Value::Number(n) => n.as_i64()?,
+                            Value::String(s) => s.parse().ok()?,
+                            _ => return None,
+                        };
+                        let rtitle = r.get("title").and_then(|t| t.as_str()).unwrap_or("").to_string();
+                        let date = r.get("date").and_then(|d| d.as_str()).map(|s| s.to_string());
+                        let release_type = r.get("type").and_then(|t| t.as_str()).map(|s| s.to_string());
+                        let r_img = r.get("image");
+                        let cover_url = r_img
+                            .and_then(|i| i.get("src"))
+                            .and_then(|s| s.as_str())
+                            .map(|src| format_image_url(src, 400, 400));
+                        let r_palette = r_img
+                            .and_then(|i| i.get("palette"))
+                            .and_then(|p| p.as_str())
+                            .map(|s| s.to_string());
+                        let explicit = r.get("explicit").and_then(|e| e.as_bool()).unwrap_or(false);
+
+                        Some(ArtistRelease {
+                            id: rid,
+                            title: rtitle,
+                            date,
+                            release_type,
+                            cover_url,
+                            palette: r_palette,
+                            explicit,
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        Ok(ArtistReleasesPage {
+            releases,
+            has_more_releases,
+            end_cursor,
         })
     }
 

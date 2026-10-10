@@ -14,6 +14,9 @@ import { useFavouritesStore } from '../favourites/favouritesStore';
  * S               – Toggle shuffle
  * R               – Cycle repeat mode
  *
+ * F               – Toggle fullscreen player
+ * Esc             – Exit fullscreen player
+ *
  * Shortcuts are suppressed when focus is inside an <input>, <textarea>, or
  * any element with [contenteditable], so the user can type normally.
  */
@@ -40,10 +43,26 @@ export function useHotkeys() {
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      // Ignore if focus is in a text input
       const target = e.target as HTMLElement;
+      const key = e.key;
+      const code = e.code;
+
+      // Esc — exit fullscreen player (handled even if focus was on a slider or input)
+      if (code === 'Escape' || key === 'Escape' || key === 'Esc') {
+        const isFSOpen = isFullscreenPlayerOpen || usePlayerStore.getState().isFullscreenPlayerOpen;
+        if (isFSOpen) {
+          e.preventDefault();
+          if (target && typeof target.blur === 'function') {
+            target.blur();
+          }
+          closeFullscreenPlayer();
+          return;
+        }
+      }
+
+      // Ignore if focus is in a text input (allow range sliders like volume to pass through)
       if (
-        target.tagName === 'INPUT' ||
+        (target.tagName === 'INPUT' && (target as HTMLInputElement).type !== 'range') ||
         target.tagName === 'TEXTAREA' ||
         target.isContentEditable
       ) {
@@ -54,9 +73,6 @@ export function useHotkeys() {
       if (e.ctrlKey || e.metaKey || e.altKey) {
         return;
       }
-
-      const key = e.key;
-      const code = e.code;
 
       // Space — play/pause (only if a track is loaded)
       if (code === 'Space' || key === ' ') {
@@ -163,5 +179,8 @@ export function useHotkeys() {
     toggleShuffle,
     cycleRepeat,
     toggleLikeTrack,
+    isFullscreenPlayerOpen,
+    openFullscreenPlayer,
+    closeFullscreenPlayer,
   ]);
 }

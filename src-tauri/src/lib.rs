@@ -1,14 +1,20 @@
 mod api_client;
 mod commands;
+mod discord_rpc;
 mod error;
 mod models;
 mod state;
 mod token_manager;
 
 use state::AppState;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 pub use commands::settings::apply_cache_browser_args;
+
+#[tauri::command]
+fn get_cli_args() -> Vec<String> {
+    std::env::args().collect()
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -17,6 +23,16 @@ pub fn run() {
     env_logger::init();
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            log::info!("Single instance triggered with args: {:?}", argv);
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+            let _ = app.emit("deep-link-received", argv);
+        }))
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_opener::init())
         .manage(AppState::new())
         .setup(|app| {
@@ -29,6 +45,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            get_cli_args,
             // Window controls
             commands::window::window_minimize,
             commands::window::window_toggle_maximize,
@@ -44,8 +61,10 @@ pub fn run() {
             commands::auth::logout,
             // Tracks & Artists
             commands::tracks::get_track,
+            commands::tracks::get_tracks_by_ids,
             commands::tracks::get_album,
             commands::tracks::get_artist,
+            commands::tracks::get_artist_releases,
             commands::tracks::get_stream_url,
             commands::tracks::get_lyrics,
 
@@ -55,6 +74,9 @@ pub fn run() {
             // Playlists
             commands::playlists::get_playlist,
             commands::playlists::get_user_playlists,
+            commands::playlists::get_user_short_playlists,
+            commands::playlists::add_items_to_playlist,
+            commands::playlists::update_playlist,
             commands::playlists::get_editorial_playlists,
             commands::playlists::create_playlist,
             commands::playlists::delete_playlist,
@@ -82,6 +104,11 @@ pub fn run() {
             // Settings
             commands::settings::get_cache_limit_mb,
             commands::settings::set_cache_limit_mb,
+            // Discord RPC
+            commands::discord::get_discord_settings,
+            commands::discord::set_discord_settings,
+            commands::discord::update_discord_activity,
+            commands::discord::get_discord_status,
         ])
 
         .run(tauri::generate_context!())

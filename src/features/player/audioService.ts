@@ -35,8 +35,8 @@ export function setupAudioContext(audio: HTMLAudioElement): AnalyserNode | null 
 
     audioContext = new AudioCtx();
     analyserNode = audioContext.createAnalyser();
-    analyserNode.fftSize = 64;
-    analyserNode.smoothingTimeConstant = 0.8;
+    analyserNode.fftSize = 128;
+    analyserNode.smoothingTimeConstant = 0.7;
 
     // Attempt non-intrusive stream capture first
     const captureStream = (audio as unknown as { captureStream?: () => MediaStream; mozCaptureStream?: () => MediaStream }).captureStream ||

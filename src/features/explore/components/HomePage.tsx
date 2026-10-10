@@ -16,6 +16,7 @@ import { useNavigate } from 'react-router-dom';
 import { SilaZvukaHero } from './SilaZvukaHero';
 import { pluralizeTracks, formatRelativeTime } from '../../../lib/formatters';
 import { ArtistLinks } from '../../../components/ArtistLinks';
+import { PlaylistCover } from '../../playlists/components/PlaylistCover';
 
 
 export function HomePage() {
@@ -118,7 +119,11 @@ export function HomePage() {
 
   const handlePlayLiked = () => {
     if (likedTracks.length > 0) {
-      setQueue(likedTracks, 0);
+      setQueue(likedTracks, 0, {
+        type: 'favourites',
+        offset: likedTracks.length,
+        hasNext: likedTracks.length >= 50,
+      });
     } else {
       navigate('/favourites');
     }
@@ -138,7 +143,14 @@ export function HomePage() {
     try {
       const full = await getPlaylist(playlist.id);
       if (full?.tracks && full.tracks.length > 0) {
-        setQueue(full.tracks, 0);
+        setQueue(full.tracks, 0, {
+          type: 'playlist',
+          id: String(full.id),
+          offset: full.tracks.length,
+          total: full.track_ids?.length ?? full.track_count ?? full.tracks.length,
+          hasNext: (full.track_ids?.length ?? 0) > full.tracks.length,
+          allTrackIds: full.track_ids ? full.track_ids.map(String) : undefined,
+        });
       }
     } catch (err) {
       console.error('[HomePage] Failed to play playlist:', err);
@@ -173,7 +185,14 @@ export function HomePage() {
       if (item.itemType === 'Playlist') {
         const full = await getPlaylist(Number(item.id));
         if (full?.tracks && full.tracks.length > 0) {
-          setQueue(full.tracks, 0);
+          setQueue(full.tracks, 0, {
+            type: 'playlist',
+            id: String(full.id),
+            offset: full.tracks.length,
+            total: full.track_ids?.length ?? full.track_count ?? full.tracks.length,
+            hasNext: (full.track_ids?.length ?? 0) > full.tracks.length,
+            allTrackIds: full.track_ids ? full.track_ids.map(String) : undefined,
+          });
         }
       } else if (item.itemType === 'Release') {
         const full = await getAlbum(Number(item.id));
@@ -520,13 +539,7 @@ export function HomePage() {
               editorialPlaylists.slice(0, gridColumns).map((pl) => (
                 <div key={pl.id} className="card" onClick={() => navigate(`/playlist/${pl.id}`)}>
                   <div className="card__cover">
-                    {pl.cover_url ? (
-                      <img src={pl.cover_url} alt={pl.title} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                    ) : (
-                      <div style={{ width: '100%', height: '100%', background: 'var(--bg-card-hover)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                        🎶
-                      </div>
-                    )}
+                    <PlaylistCover playlist={pl} />
                     <button
                       className="card__play-btn card__play-overlay"
                       title="Воспроизвести"

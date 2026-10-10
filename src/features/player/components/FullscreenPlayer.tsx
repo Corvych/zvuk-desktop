@@ -4,47 +4,272 @@ import { useFavouritesStore } from '../../favourites/favouritesStore';
 import { formatTime } from '../../../lib/formatters';
 import { extractMonetFromImage, extractMonetThemeFromPalette } from '../../../lib/monetPalette';
 import { LikeButton } from '../../../components/LikeButton';
+import { ShareIcon } from '../../../components/ShareIcon';
 import { ArtistLinks } from '../../../components/ArtistLinks';
 import { showToast } from '../../../components/Toast';
 import { getOrCreateAudio, getAnalyser } from '../audioService';
-import { fetchUnifiedLyrics, type ResolvedLyrics } from '../lyricsService';
+import {
+  fetchUnifiedLyrics,
+  probeAllSources,
+  getCachedUnifiedLyrics,
+  getCachedProbeResults,
+  type ResolvedLyrics,
+  type SourceAvailability,
+} from '../lyricsService';
 import { useLyricsSettingsStore } from '../../settings/lyricsSettingsStore';
+import { useVolumeWheel } from '../useVolumeWheel';
+import { usePlaylistModalStore } from '../../playlists/playlistModalStore';
+import { getCoverUrl } from '../../../api';
 
-interface LyricLine {
-  time?: number; // seconds
+export interface LyricWord {
   text: string;
+  time: number;
+  endTime: number;
+  hasSpaceAfter?: boolean;
+}
+
+export interface LyricLine {
+  time?: number; // seconds
+  endTime?: number;
+  text: string;
+  words: LyricWord[];
+  hasEnhancedTimings: boolean;
+}
+
+interface WordBoundary {
+  word: string;
+  startIndex: number;
+  endIndex: number;
+  boundaryFrac: number;
+  nextWordStartFrac: number;
+  pauseWeight: number;
+}
+
+function extractWordBoundaries(text: string): WordBoundary[] {
+  const len = text.length;
+  if (len === 0) return [];
+
+  const regex = /\S+/g;
+  const matches = [...text.matchAll(regex)];
+  if (matches.length === 0) return [];
+
+  const boundaries: WordBoundary[] = [];
+  for (let i = 0; i < matches.length; i++) {
+    const m = matches[i];
+    const word = m[0];
+    const startIndex = m.index!;
+    const endIndex = startIndex + word.length;
+    const boundaryFrac = endIndex / len;
+
+    const nextMatch = matches[i + 1];
+    const nextWordStartFrac = nextMatch ? nextMatch.index! / len : 1.0;
+
+    const hasStrongPunctuation = /[,\.\?!:;\u2014\-]/.test(word[word.length - 1]);
+    const hasEllipsis = word.includes('...') || word.includes('…');
+    const pauseWeight = hasEllipsis ? 2.8 : hasStrongPunctuation ? 2.0 : 1.0;
+
+    boundaries.push({
+      word,
+      startIndex,
+      endIndex,
+      boundaryFrac,
+      nextWordStartFrac,
+      pauseWeight,
+    });
+  }
+  return boundaries;
 }
 
 function parseLyrics(rawLyrics: string, isSynced: boolean): LyricLine[] {
   if (!rawLyrics) return [];
+
+  // 1. Check for TTML (Apple Music / Better Lyrics word-by-word or line sync)
+  const isTtml = rawLyrics.includes('<tt') || /<p\s+begin=/i.test(rawLyrics);
+  if (isTtml) {
+    const parseTtmlTime = (str: string): number => {
+      if (!str) return 0;
+      const parts = str.trim().split(':');
+      if (parts.length === 1) return parseFloat(parts[0]) || 0;
+      if (parts.length === 2) return parseInt(parts[0], 10) * 60 + (parseFloat(parts[1]) || 0);
+      if (parts.length === 3) return parseInt(parts[0], 10) * 3600 + parseInt(parts[1], 10) * 60 + (parseFloat(parts[2]) || 0);
+      return 0;
+    };
+
+    const pRegex = /<p\s+begin="([^"]+)"(?:[^>]*end="([^"]+)")?[^>]*>([\s\S]*?)<\/p>/gi;
+    const spanRegex = /<span\s+begin="([^"]+)"(?:[^>]*end="([^"]+)")?[^>]*>([\s\S]*?)<\/span>/gi;
+    const result: LyricLine[] = [];
+    let pMatch: RegExpExecArray | null;
+
+    while ((pMatch = pRegex.exec(rawLyrics)) !== null) {
+      const lineStart = parseTtmlTime(pMatch[1]);
+      const lineEnd = pMatch[2] ? parseTtmlTime(pMatch[2]) : undefined;
+      const inner = pMatch[3];
+
+      const spans = [...inner.matchAll(spanRegex)];
+      if (spans.length > 0) {
+        const words: LyricWord[] = [];
+        let fullText = '';
+
+        for (let j = 0; j < spans.length; j++) {
+          const sp = spans[j];
+          const wStart = parseTtmlTime(sp[1]);
+          const wEnd = sp[2]
+            ? parseTtmlTime(sp[2])
+            : j < spans.length - 1
+            ? parseTtmlTime(spans[j + 1][1])
+            : (lineEnd ?? (wStart + 1.0));
+          const wText = sp[3].replace(/<[^>]+>/g, '').trim();
+          if (!wText) continue;
+
+          fullText += (fullText ? ' ' : '') + wText;
+          words.push({
+            text: wText,
+            time: wStart,
+            endTime: wEnd,
+            hasSpaceAfter: j < spans.length - 1 && !/[\u4e00-\u9fa5]/.test(wText),
+          });
+        }
+
+        const cleanFull = fullText.trim();
+        if (cleanFull) {
+          result.push({
+            time: lineStart,
+            endTime: lineEnd ?? words[words.length - 1]?.endTime,
+            text: cleanFull,
+            words,
+            hasEnhancedTimings: true,
+          });
+        }
+      } else {
+        const cleanText = inner.replace(/<[^>]+>/g, '').trim();
+        if (cleanText) {
+          result.push({
+            time: lineStart,
+            endTime: lineEnd,
+            text: cleanText,
+            words: cleanText.split(/\s+/).map((w) => ({ text: w, time: 0, endTime: 0, hasSpaceAfter: true })),
+            hasEnhancedTimings: false,
+          });
+        }
+      }
+    }
+    if (result.length > 0) return result;
+  }
+
+  // 2. Standard or Enhanced LRC parsing
   const lines = rawLyrics.split('\n');
-  const result: LyricLine[] = [];
-  const timeRegex = /\[(\d{1,2}):(\d{2})(?:\.(\d{1,3}))?\]/g;
+  const tempLines: { time?: number; rawText: string }[] = [];
+  const lineTimeRegex = /\[(\d{1,2}):(\d{2})(?:\.(\d{1,3}))?\]/g;
+  const tagOrWordRegex = /<(\d{1,2}):(\d{2})(?:\.(\d{1,3}))?>([^<]*)/g;
 
   for (const line of lines) {
     const trimmed = line.trim();
     if (!trimmed) {
-      result.push({ text: '' });
+      tempLines.push({ rawText: '' });
       continue;
     }
 
-    const matches = [...trimmed.matchAll(timeRegex)];
+    const matches = [...trimmed.matchAll(lineTimeRegex)];
     if (matches.length > 0) {
-      const cleanText = trimmed.replace(timeRegex, '').trim();
+      const cleanWithoutLineTags = trimmed.replace(lineTimeRegex, '').trim();
+      if (!cleanWithoutLineTags) continue;
+
       for (const match of matches) {
         const min = parseInt(match[1], 10);
         const sec = parseInt(match[2], 10);
         const ms = match[3] ? parseInt(match[3].padEnd(3, '0').slice(0, 3), 10) : 0;
         const totalSeconds = min * 60 + sec + ms / 1000;
-        result.push({ time: totalSeconds, text: cleanText });
+        tempLines.push({ time: totalSeconds, rawText: cleanWithoutLineTags });
       }
-    } else {
-      result.push({ text: trimmed });
+    } else if (!isSynced) {
+      tempLines.push({ rawText: trimmed });
     }
   }
 
-  if (isSynced && result.some((r) => r.time !== undefined)) {
-    return result.sort((a, b) => (a.time ?? 0) - (b.time ?? 0));
+  const sortedLines = isSynced && tempLines.some((r) => r.time !== undefined)
+    ? tempLines.sort((a, b) => (a.time ?? 0) - (b.time ?? 0))
+    : tempLines;
+
+  const result: LyricLine[] = [];
+  for (let i = 0; i < sortedLines.length; i++) {
+    const curr = sortedLines[i];
+    const next = sortedLines[i + 1];
+    const lineTime = curr.time;
+    const rawText = curr.rawText;
+
+    if (!rawText) continue;
+
+    const enhancedMatches = [...rawText.matchAll(tagOrWordRegex)];
+    if (enhancedMatches.length > 0) {
+      const words: LyricWord[] = [];
+      let fullText = '';
+
+      for (let j = 0; j < enhancedMatches.length; j++) {
+        const m = enhancedMatches[j];
+        const min = parseInt(m[1], 10);
+        const sec = parseInt(m[2], 10);
+        const ms = m[3] ? parseInt(m[3].padEnd(3, '0').slice(0, 3), 10) : 0;
+        const wordStart = min * 60 + sec + ms / 1000;
+        const wordText = m[4].trim();
+
+        let wordEnd = wordStart + Math.max(0.25, wordText.length * 0.08);
+        if (j < enhancedMatches.length - 1) {
+          const nm = enhancedMatches[j + 1];
+          const nMin = parseInt(nm[1], 10);
+          const nSec = parseInt(nm[2], 10);
+          const nMs = nm[3] ? parseInt(nm[3].padEnd(3, '0').slice(0, 3), 10) : 0;
+          wordEnd = nMin * 60 + nSec + nMs / 1000;
+        } else if (next && next.time !== undefined) {
+          wordEnd = Math.min(next.time, wordStart + 2.5);
+        }
+
+        fullText += (fullText ? ' ' : '') + wordText;
+        words.push({
+          text: wordText,
+          time: wordStart,
+          endTime: wordEnd,
+          hasSpaceAfter: j < enhancedMatches.length - 1,
+        });
+      }
+
+      result.push({
+        time: lineTime,
+        endTime: next?.time ?? words[words.length - 1]?.endTime,
+        text: fullText.trim(),
+        words,
+        hasEnhancedTimings: true,
+      });
+    } else {
+      const cleanText = rawText.replace(/<[^>]+>/g, '').trim();
+      const rawWords = cleanText.split(/\s+/).filter(Boolean);
+      const lineDuration = next && next.time !== undefined && lineTime !== undefined
+        ? Math.max(1.0, next.time - lineTime)
+        : 3.5;
+
+      const boundaries = extractWordBoundaries(cleanText);
+      const words: LyricWord[] = rawWords.map((w, idx) => {
+        const b = boundaries[idx];
+        const startFraction = idx === 0 ? 0 : boundaries[idx - 1]?.nextWordStartFrac ?? (idx / rawWords.length);
+        const endFraction = b ? b.boundaryFrac : (idx + 1) / rawWords.length;
+        const wStart = lineTime !== undefined ? lineTime + startFraction * lineDuration : 0;
+        const wEnd = lineTime !== undefined ? lineTime + endFraction * lineDuration : 0;
+
+        return {
+          text: w,
+          time: wStart,
+          endTime: wEnd,
+          hasSpaceAfter: idx < rawWords.length - 1,
+        };
+      });
+
+      result.push({
+        time: lineTime,
+        endTime: next?.time ?? (lineTime !== undefined ? lineTime + lineDuration : undefined),
+        text: cleanText,
+        words,
+        hasEnhancedTimings: false,
+      });
+    }
   }
   return result;
 }
@@ -161,9 +386,33 @@ export function FullscreenPlayer() {
   const toggleLikeTrack = useFavouritesStore((s) => s.toggleLikeTrack);
 
   // Lyrics state
-  const { enableZvuk, enableLrclib, priority } = useLyricsSettingsStore();
-  const [lyricsInfo, setLyricsInfo] = useState<ResolvedLyrics | null>(null);
-  const [lyricsLoading, setLyricsLoading] = useState(false);
+  const {
+    enableZvuk,
+    enableBetterLyrics,
+    enableNetease,
+    enableLrclib,
+    preferWordSync,
+    priority,
+    timingOffset,
+    adjustTimingOffset,
+    resetTimingOffset,
+  } = useLyricsSettingsStore();
+
+  // Synchronous cache-first state initialization
+  const [lyricsInfo, setLyricsInfo] = useState<ResolvedLyrics | null>(() => {
+    return currentTrack ? (getCachedUnifiedLyrics(currentTrack.id, null) ?? null) : null;
+  });
+  const [lyricsLoading, setLyricsLoading] = useState(() => {
+    if (!currentTrack) return false;
+    return getCachedUnifiedLyrics(currentTrack.id, null) === undefined;
+  });
+  const [sourcesAvailability, setSourcesAvailability] = useState<Record<string, SourceAvailability>>(() => {
+    return currentTrack ? (getCachedProbeResults(currentTrack.id) ?? {}) : {};
+  });
+  const [preferredSource, setPreferredSource] = useState<'zvuk' | 'betterlyrics' | 'netease' | 'lrclib' | null>(null);
+  const [sourceMenuOpen, setSourceMenuOpen] = useState(false);
+  const sourceMenuRef = useRef<HTMLDivElement>(null);
+
   const lyricsContainerRef = useRef<HTMLDivElement>(null);
   const lineRefs = useRef<(HTMLDivElement | null)[]>([]);
   const isUserScrollingRef = useRef(false);
@@ -173,6 +422,72 @@ export function FullscreenPlayer() {
   // Sub-second precision for ultra-smooth 60fps karaoke line progress & audio-reactivity
   const [smoothTime, setSmoothTime] = useState(progress);
   const [audioVocalEnergy, setAudioVocalEnergy] = useState(0);
+
+  // Check cache and reset preferredSource when track changes
+  useEffect(() => {
+    setPreferredSource(null);
+    if (!currentTrack) {
+      setLyricsInfo(null);
+      setLyricsLoading(false);
+      setSourcesAvailability({});
+      return;
+    }
+
+    const cachedProbes = getCachedProbeResults(currentTrack.id);
+    if (cachedProbes) {
+      setSourcesAvailability(cachedProbes);
+    } else {
+      setSourcesAvailability({});
+    }
+
+    const cachedLyrics = getCachedUnifiedLyrics(currentTrack.id, null);
+    if (cachedLyrics !== undefined) {
+      setLyricsInfo(cachedLyrics);
+      setLyricsLoading(false);
+    } else {
+      setLyricsInfo(null);
+      setLyricsLoading(true);
+    }
+  }, [currentTrack?.id]);
+
+  // Probe all available sources for current track in background
+  useEffect(() => {
+    if (!currentTrack || !isFullscreenPlayerOpen) return;
+    let isCancelled = false;
+
+    // If already probed and cached, populate immediately without re-probing
+    const cachedProbes = getCachedProbeResults(currentTrack.id);
+    if (cachedProbes) {
+      setSourcesAvailability(cachedProbes);
+      return;
+    }
+
+    probeAllSources(currentTrack, (source, info) => {
+      if (!isCancelled) {
+        setSourcesAvailability((prev) => ({ ...prev, [source]: info }));
+      }
+    }).then((results) => {
+      if (!isCancelled) {
+        setSourcesAvailability(results);
+      }
+    });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [currentTrack?.id, isFullscreenPlayerOpen]);
+
+  // Close source dropdown on click outside
+  useEffect(() => {
+    if (!sourceMenuOpen) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (sourceMenuRef.current && !sourceMenuRef.current.contains(e.target as Node)) {
+        setSourceMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [sourceMenuOpen]);
 
   useEffect(() => {
     if (fullscreenTab !== 'lyrics' || !isPlaying) {
@@ -211,9 +526,23 @@ export function FullscreenPlayer() {
 
   // More menu & sleep timer
   const [isMoreMenuOpen, setIsMoreMenuOpen] = useState(false);
+  const moreMenuRef = useRef<HTMLDivElement>(null);
   const [isZenMode, setIsZenMode] = useState(false);
   const [qualityMenuOpen, setQualityMenuOpen] = useState(false);
   const [coverGlowRgb, setCoverGlowRgb] = useState<string>('80, 80, 95');
+  const volumeControlRef = useVolumeWheel(isFullscreenPlayerOpen);
+
+  // Close more menu when clicking outside
+  useEffect(() => {
+    if (!isMoreMenuOpen) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (moreMenuRef.current && !moreMenuRef.current.contains(e.target as Node)) {
+        setIsMoreMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [isMoreMenuOpen]);
 
   // Extract Monet / ambient cover color
   useEffect(() => {
@@ -228,13 +557,21 @@ export function FullscreenPlayer() {
     }
   }, [currentTrack]);
 
-  // Fetch unified lyrics (Zvuk + LRCLIB with configurable priority)
+  // Fetch unified lyrics (Zvuk + Better Lyrics + NetEase + LRCLIB)
   useEffect(() => {
     if (!currentTrack || !isFullscreenPlayerOpen) return;
     let isCancelled = false;
 
+    // Check cache first: if already cached, use immediately and don't show loading spinner!
+    const cached = getCachedUnifiedLyrics(currentTrack.id, preferredSource);
+    if (cached !== undefined) {
+      setLyricsInfo(cached);
+      setLyricsLoading(false);
+      return;
+    }
+
     setLyricsLoading(true);
-    fetchUnifiedLyrics(currentTrack)
+    fetchUnifiedLyrics(currentTrack, preferredSource ?? undefined)
       .then((data) => {
         if (!isCancelled) {
           setLyricsInfo(data);
@@ -252,7 +589,49 @@ export function FullscreenPlayer() {
     return () => {
       isCancelled = true;
     };
-  }, [currentTrack?.id, isFullscreenPlayerOpen, enableZvuk, enableLrclib, priority]);
+  }, [
+    currentTrack?.id,
+    isFullscreenPlayerOpen,
+    preferredSource,
+    enableZvuk,
+    enableBetterLyrics,
+    enableNetease,
+    enableLrclib,
+    preferWordSync,
+    priority,
+  ]);
+
+  // Available sources and provider options for HUD
+  const allProviderOptions: {
+    id: 'betterlyrics' | 'zvuk' | 'netease' | 'lrclib';
+    name: string;
+    desc: string;
+  }[] = [
+    { id: 'betterlyrics', name: 'Better Lyrics', desc: 'Словарная караоке-синхронизация (Apple Music / TTML)' },
+    { id: 'zvuk', name: 'Звук Официальный', desc: 'Официальные студийные тексты' },
+    { id: 'netease', name: 'NetEase Music', desc: 'Enhanced LRC / слоговая синхронизация' },
+    { id: 'lrclib', name: 'LRCLIB', desc: 'Открытая база текстов и таймингов' },
+  ];
+
+  const availableSourcesWithText = useMemo(() => {
+    return Object.values(sourcesAvailability).filter((s) => s.status === 'available').length;
+  }, [sourcesAvailability]);
+
+  const isAnySourceProbing = useMemo(() => {
+    return Object.values(sourcesAvailability).some((s) => s.status === 'loading');
+  }, [sourcesAvailability]);
+
+  const getProviderStatus = (id: string) => {
+    const probe = sourcesAvailability[id];
+    if (!probe) return { text: '...', class: 'loading' };
+    if (probe.status === 'loading') return { text: 'Поиск...', class: 'loading' };
+    if (probe.status === 'available') {
+      if (probe.hasWordSync) return { text: 'Karaoke', class: 'wordsync' };
+      if (probe.isSynced) return { text: 'LRC', class: 'lrc' };
+      return { text: 'TXT', class: 'txt' };
+    }
+    return { text: 'Нет текста', class: 'empty' };
+  };
 
   // Parse lyrics
   const parsedLyrics = useMemo(() => {
@@ -260,20 +639,23 @@ export function FullscreenPlayer() {
     return parseLyrics(lyricsInfo.lyrics, !!lyricsInfo.is_synced);
   }, [lyricsInfo]);
 
-  // Find active synced lyric index using smoothTime
+  // Effective smooth time with user timing offset applied
+  const effectiveSmoothTime = Math.max(0, smoothTime + timingOffset);
+
+  // Find active synced lyric index using effectiveSmoothTime
   const activeLyricIndex = useMemo(() => {
     if (!lyricsInfo?.is_synced || parsedLyrics.length === 0) return -1;
     let activeIdx = -1;
     for (let i = 0; i < parsedLyrics.length; i++) {
       const lineTime = parsedLyrics[i].time;
-      if (lineTime !== undefined && lineTime <= smoothTime) {
+      if (lineTime !== undefined && lineTime <= effectiveSmoothTime) {
         activeIdx = i;
-      } else if (lineTime !== undefined && lineTime > smoothTime) {
+      } else if (lineTime !== undefined && lineTime > effectiveSmoothTime) {
         break;
       }
     }
     return activeIdx;
-  }, [lyricsInfo?.is_synced, parsedLyrics, smoothTime]);
+  }, [lyricsInfo?.is_synced, parsedLyrics, effectiveSmoothTime]);
 
   // Active line progress percentage (0.0 to 1.0) with audio-reactive vocal modulation
   const activeLineProgress = useMemo(() => {
@@ -287,56 +669,112 @@ export function FullscreenPlayer() {
         : currentLineTime + 4;
 
     const lineDuration = Math.max(0.6, nextLineTime - currentLineTime);
-    const nominalFraction = Math.min(1, Math.max(0, (smoothTime - currentLineTime) / lineDuration));
+    const nominalFraction = Math.min(1, Math.max(0, (effectiveSmoothTime - currentLineTime) / lineDuration));
 
-    // Audio-reactive modulation:
-    // When the singer vocalizes with higher intensity, progress dynamically leaps forward (up to +4%),
-    // giving an organic sensation of singing in real time rather than mechanical linear pacing.
     const vocalPush = (audioVocalEnergy - 0.28) * 0.04;
     return Math.min(1, Math.max(0, nominalFraction + vocalPush));
-  }, [activeLyricIndex, parsedLyrics, smoothTime, audioVocalEnergy]);
+  }, [activeLyricIndex, parsedLyrics, effectiveSmoothTime, audioVocalEnergy]);
 
-  // Center active line in lyrics container
-  const scrollToActiveLine = useCallback((smooth = true) => {
+  const [syncButtonDirection, setSyncButtonDirection] = useState<'up' | 'down'>('up');
+
+  // Helper to center any specific line by index
+  const centerLine = useCallback((index: number, smooth = true) => {
     const container = lyricsContainerRef.current;
-    if (!container || activeLyricIndex < 0) return;
-    const activeEl = lineRefs.current[activeLyricIndex];
-    if (!activeEl) return;
+    if (!container || index < 0) return;
+    const el = lineRefs.current[index];
+    if (!el) return;
 
     const containerHeight = container.clientHeight;
-    const elTop = activeEl.offsetTop;
-    const elHeight = activeEl.clientHeight;
+    const elTop = el.offsetTop;
+    const elHeight = el.clientHeight;
     const targetScroll = elTop - containerHeight / 2 + elHeight / 2;
 
     container.scrollTo({
       top: Math.max(0, targetScroll),
       behavior: smooth ? 'smooth' : 'auto',
     });
-    setShowSyncButton(false);
+  }, []);
+
+  // Center currently active line
+  const scrollToActiveLine = useCallback((smooth = true) => {
+    if (activeLyricIndex >= 0) {
+      centerLine(activeLyricIndex, smooth);
+      setShowSyncButton(false);
+    }
+  }, [activeLyricIndex, centerLine]);
+
+  // Check whether active line is currently in the visible area of the scroll container
+  const checkActiveLineVisibility = useCallback(() => {
+    const container = lyricsContainerRef.current;
+    if (!container || activeLyricIndex < 0) {
+      setShowSyncButton(false);
+      return;
+    }
+    const activeEl = lineRefs.current[activeLyricIndex];
+    if (!activeEl) {
+      setShowSyncButton(false);
+      return;
+    }
+
+    const containerHeight = container.clientHeight;
+    const scrollTop = container.scrollTop;
+    const elTop = activeEl.offsetTop - scrollTop;
+    const elBottom = elTop + activeEl.clientHeight;
+
+    // Viewport threshold with safe margin for top/bottom fade gradient masks
+    const topSafe = containerHeight * 0.15;
+    const bottomSafe = containerHeight * 0.85;
+
+    if (elBottom < topSafe) {
+      // Active line is scrolled away above
+      setShowSyncButton(true);
+      setSyncButtonDirection('up');
+    } else if (elTop > bottomSafe) {
+      // Active line is scrolled away below
+      setShowSyncButton(true);
+      setSyncButtonDirection('down');
+    } else {
+      // Active line is in view, hide the return button
+      setShowSyncButton(false);
+    }
   }, [activeLyricIndex]);
 
-  // Handle user manual scroll: pause auto-scroll for 4.5s and offer quick re-sync
-  const handleUserScroll = useCallback(() => {
+  // Handle user manual scroll: pause auto-scroll completely so user can freely read lyrics
+  const handleScroll = useCallback(() => {
     isUserScrollingRef.current = true;
-    setShowSyncButton(true);
+    checkActiveLineVisibility();
 
     if (userScrollTimeoutRef.current) {
       window.clearTimeout(userScrollTimeoutRef.current);
     }
-
+    // Generous idle timer: only resume auto-scroll if user stopped scrolling AND is already looking at active line
     userScrollTimeoutRef.current = window.setTimeout(() => {
-      isUserScrollingRef.current = false;
-      setShowSyncButton(false);
-      scrollToActiveLine(true);
-    }, 4500);
-  }, [scrollToActiveLine]);
+      const container = lyricsContainerRef.current;
+      if (container && activeLyricIndex >= 0) {
+        const activeEl = lineRefs.current[activeLyricIndex];
+        if (activeEl) {
+          const elTop = activeEl.offsetTop - container.scrollTop;
+          const elBottom = elTop + activeEl.clientHeight;
+          // Only release manual scroll if active line is centered/in view
+          if (elBottom >= container.clientHeight * 0.25 && elTop <= container.clientHeight * 0.75) {
+            isUserScrollingRef.current = false;
+          }
+        }
+      }
+    }, 12000);
+  }, [activeLyricIndex, checkActiveLineVisibility]);
 
-  // Auto-scroll on active lyric line change
+  // Auto-scroll on active lyric line change (only when user is not manually scrolling)
   useEffect(() => {
-    if (fullscreenTab === 'lyrics' && activeLyricIndex >= 0 && !isUserScrollingRef.current) {
-      scrollToActiveLine(true);
+    if (fullscreenTab === 'lyrics' && activeLyricIndex >= 0) {
+      if (!isUserScrollingRef.current) {
+        scrollToActiveLine(true);
+      } else {
+        // While user is manually browsing, only update return button visibility
+        checkActiveLineVisibility();
+      }
     }
-  }, [activeLyricIndex, fullscreenTab, scrollToActiveLine]);
+  }, [activeLyricIndex, fullscreenTab, scrollToActiveLine, checkActiveLineVisibility]);
 
   // Immediate centering when opening lyrics tab
   useEffect(() => {
@@ -344,40 +782,30 @@ export function FullscreenPlayer() {
       isUserScrollingRef.current = false;
       setShowSyncButton(false);
       const timer = window.setTimeout(() => {
-        scrollToActiveLine(false);
-      }, 80);
+        centerLine(activeLyricIndex, false);
+      }, 60);
       return () => window.clearTimeout(timer);
     }
-  }, [fullscreenTab]);
+  }, [fullscreenTab, activeLyricIndex, centerLine]);
 
-  // Keyboard controls
+  // Keyboard controls (Escape to close submenus or exit fullscreen player)
   useEffect(() => {
     if (!isFullscreenPlayerOpen) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Don't intercept typing in inputs
-      if (['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement).tagName)) return;
+      if (e.key === 'Escape' || e.key === 'Esc' || e.code === 'Escape') {
+        e.preventDefault();
+        e.stopImmediatePropagation();
 
-      if (e.key === 'Escape') {
-        e.preventDefault();
+        if (isMoreMenuOpen) {
+          setIsMoreMenuOpen(false);
+          return;
+        }
+        if (qualityMenuOpen) {
+          setQualityMenuOpen(false);
+          return;
+        }
         closeFullscreenPlayer();
-      } else if (e.code === 'Space') {
-        e.preventDefault();
-        togglePlay();
-      } else if (e.key === 'ArrowRight') {
-        e.preventDefault();
-        seekTo(Math.min(duration, progress + 5));
-      } else if (e.key === 'ArrowLeft') {
-        e.preventDefault();
-        seekTo(Math.max(0, progress - 5));
-      } else if (e.key === 'ArrowUp') {
-        e.preventDefault();
-        setVolume(Math.min(1, volume + 0.05));
-      } else if (e.key === 'ArrowDown') {
-        e.preventDefault();
-        setVolume(Math.max(0, volume - 0.05));
-      } else if (e.key === 'KeyL' || e.key === 'l' || e.key === 'д' || e.key === 'Д') {
-        if (currentTrack) toggleLikeTrack(currentTrack.id);
       }
     };
 
@@ -385,14 +813,8 @@ export function FullscreenPlayer() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [
     isFullscreenPlayerOpen,
-    currentTrack,
-    duration,
-    progress,
-    volume,
-    togglePlay,
-    seekTo,
-    setVolume,
-    toggleLikeTrack,
+    isMoreMenuOpen,
+    qualityMenuOpen,
     closeFullscreenPlayer,
   ]);
 
@@ -468,7 +890,7 @@ export function FullscreenPlayer() {
           <div className="fullscreen-player-card__artwork-wrapper">
             {currentTrack.cover_url ? (
               <img
-                src={currentTrack.cover_url}
+                src={getCoverUrl(currentTrack.cover_url, 'large')}
                 alt={currentTrack.title}
                 className={`fullscreen-player-card__artwork ${!isPlaying ? 'fullscreen-player-card__artwork--paused' : ''}`}
                 onClick={togglePlay}
@@ -498,7 +920,7 @@ export function FullscreenPlayer() {
 
             <div className="fullscreen-player-card__actions">
               {/* More options button */}
-              <div style={{ position: 'relative' }}>
+              <div style={{ position: 'relative' }} ref={moreMenuRef}>
                 <button
                   type="button"
                   className="fullscreen-icon-btn"
@@ -518,10 +940,65 @@ export function FullscreenPlayer() {
                       type="button"
                       onClick={() => {
                         setIsMoreMenuOpen(false);
+                        navigator.clipboard.writeText(`https://zvuk.com/track/${currentTrack.id}`);
+                        showToast('Ссылка на трек скопирована', 'success');
+                      }}
+                    >
+                      <ShareIcon size={16} />
+                      Поделиться треком
+                    </button>
+                    {currentTrack.album_id && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsMoreMenuOpen(false);
+                          navigator.clipboard.writeText(`https://zvuk.com/release/${currentTrack.album_id}`);
+                          showToast('Ссылка на альбом скопирована', 'success');
+                        }}
+                      >
+                        <ShareIcon size={16} />
+                        Поделиться альбомом
+                      </button>
+                    )}
+                    {(currentTrack.artist_id || currentTrack.artists?.[0]?.id) && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsMoreMenuOpen(false);
+                          const aId = currentTrack.artist_id ?? currentTrack.artists?.[0]?.id;
+                          navigator.clipboard.writeText(`https://zvuk.com/artist/${aId}`);
+                          showToast('Ссылка на артиста скопирована', 'success');
+                        }}
+                      >
+                        <ShareIcon size={16} />
+                        Поделиться артистом
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsMoreMenuOpen(false);
+                        usePlaylistModalStore.getState().openAddToPlaylist(currentTrack);
+                      }}
+                    >
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <line x1="12" y1="5" x2="12" y2="19" />
+                        <line x1="5" y1="12" x2="19" y2="12" />
+                      </svg>
+                      Добавить в плейлист
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsMoreMenuOpen(false);
                         navigator.clipboard.writeText(`${currentTrack.artist} - ${currentTrack.title}`);
                         showToast('Название трека скопировано', 'info');
                       }}
                     >
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                      </svg>
                       Скопировать название
                     </button>
                     {currentTrack.album_id && (
@@ -533,6 +1010,10 @@ export function FullscreenPlayer() {
                           window.location.hash = `/album/${currentTrack.album_id}`;
                         }}
                       >
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <circle cx="12" cy="12" r="10" />
+                          <circle cx="12" cy="12" r="3" />
+                        </svg>
                         Перейти к альбому
                       </button>
                     )}
@@ -560,12 +1041,16 @@ export function FullscreenPlayer() {
           {/* Playback Controls Row */}
           <div className="fullscreen-controls">
             {/* Volume Control */}
-            <div className="fullscreen-controls__volume">
+            <div
+              ref={volumeControlRef}
+              className="fullscreen-controls__volume"
+              title={`Громкость: ${Math.round((isMuted ? 0 : volume) * 100)}% (прокрутка колёсиком мыши)`}
+            >
               <button
                 type="button"
                 className="fullscreen-icon-btn"
                 onClick={toggleMute}
-                title={isMuted ? 'Включить звук' : 'Выключить звук'}
+                title={isMuted ? 'Включить звук' : 'Выключить звук (колёсико для громкости)'}
               >
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   {isMuted || volume === 0 ? (
@@ -598,7 +1083,7 @@ export function FullscreenPlayer() {
                 onChange={(e) => setVolume(parseFloat(e.target.value))}
                 onPointerUp={(e) => (e.target as HTMLElement).blur()}
                 onPointerLeave={(e) => (e.target as HTMLElement).blur()}
-                title={`Громкость: ${Math.round(volume * 100)}%`}
+                title={`Громкость: ${Math.round((isMuted ? 0 : volume) * 100)}% (прокрутка колёсиком мыши)`}
               />
             </div>
 
@@ -733,107 +1218,301 @@ export function FullscreenPlayer() {
 
         {/* Right Column: Lyrics View */}
         {fullscreenTab === 'lyrics' && (
-          <div
-            className="fullscreen-lyrics-pane"
-            ref={lyricsContainerRef}
-            onWheel={handleUserScroll}
-            onTouchMove={handleUserScroll}
-          >
-            {/* Audio-reactive ambient aura behind singing focus area */}
-            <div className="fullscreen-lyrics-pane__ambient" aria-hidden="true" />
+          <div className="fullscreen-lyrics-column">
+            {/* Lyrics Control HUD: Source Selector & Timing Offset Pill (Always accessible, outside scroll container) */}
+            <div className="fullscreen-lyrics-hud">
+              {/* Source Selector Dropdown */}
+              <div className="fullscreen-lyrics-source-selector" ref={sourceMenuRef}>
+                <button
+                  type="button"
+                  className={`fullscreen-lyrics-source-tag fullscreen-lyrics-source-tag--interactive ${
+                    sourceMenuOpen ? 'fullscreen-lyrics-source-tag--open' : ''
+                  }`}
+                  onClick={() => setSourceMenuOpen((prev) => !prev)}
+                  title="Выбрать источник текста песни"
+                >
+                  <span className="fullscreen-lyrics-source-tag__name">
+                    {lyricsInfo ? lyricsInfo.sourceLabel : 'Поиск источника...'}
+                  </span>
+                  {lyricsInfo && (
+                    <span
+                      className={`fullscreen-lyrics-source-tag__type ${
+                        lyricsInfo.has_word_sync || lyricsInfo.is_synced ? 'fullscreen-lyrics-source-tag__type--synced' : ''
+                      }`}
+                    >
+                      {lyricsInfo.has_word_sync ? 'Karaoke' : lyricsInfo.is_synced ? 'LRC' : 'TXT'}
+                    </span>
+                  )}
+                  {availableSourcesWithText > 0 && (
+                    <span
+                      className="fullscreen-lyrics-source-tag__count"
+                      title={`Доступно источников: ${availableSourcesWithText}`}
+                    >
+                      {availableSourcesWithText}
+                    </span>
+                  )}
+                  <svg
+                    className={`fullscreen-lyrics-source-tag__chevron ${
+                      sourceMenuOpen ? 'fullscreen-lyrics-source-tag__chevron--open' : ''
+                    }`}
+                    width="10"
+                    height="10"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.5"
+                  >
+                    <polyline points="6 9 12 15 18 9" />
+                  </svg>
+                </button>
 
-            {/* Source indicator badge */}
-            {lyricsInfo && !lyricsLoading && (
-              <div className="fullscreen-lyrics-source-tag" title={`Источник текста: ${lyricsInfo.sourceLabel} (${lyricsInfo.is_synced ? 'караоке / тайминги' : 'статичный текст'})`}>
-                <span className="fullscreen-lyrics-source-tag__name">{lyricsInfo.sourceLabel}</span>
-                <span className={`fullscreen-lyrics-source-tag__type ${lyricsInfo.is_synced ? 'fullscreen-lyrics-source-tag__type--synced' : ''}`}>
-                  {lyricsInfo.is_synced ? 'LRC' : 'TXT'}
-                </span>
-              </div>
-            )}
-
-            {lyricsLoading ? (
-              <div className="fullscreen-lyrics-pane__loading">
-                <div className="spinner" />
-                <span>Загрузка текста...</span>
-              </div>
-            ) : parsedLyrics.length > 0 ? (
-              <>
-                <div className="fullscreen-lyrics-pane__lines">
-                  {parsedLyrics.map((line, idx) => {
-                    const isActive = idx === activeLyricIndex;
-                    const isPast = activeLyricIndex >= 0 && idx < activeLyricIndex;
-                    const isFuture = activeLyricIndex >= 0 && idx > activeLyricIndex;
-                    const isSynced = line.time !== undefined;
-
-                    // Distance-based blur & focus depth (Apple Music style)
-                    const distance = activeLyricIndex >= 0 ? Math.abs(idx - activeLyricIndex) : 0;
-                    const blurAmount = isActive ? 0 : Math.min(2.2, distance * 0.4);
-                    const opacityAmount = isActive
-                      ? 1
-                      : isPast
-                      ? Math.max(0.35, 0.75 - distance * 0.08)
-                      : Math.max(0.18, 0.5 - distance * 0.08);
-
-                    return (
-                      <div
-                        key={idx}
-                        ref={(el) => {
-                          lineRefs.current[idx] = el;
-                        }}
-                        className={`fullscreen-lyric-line ${
-                          isActive
-                            ? 'fullscreen-lyric-line--active'
-                            : isPast
-                            ? 'fullscreen-lyric-line--past'
-                            : isFuture
-                            ? 'fullscreen-lyric-line--future'
-                            : ''
-                        } ${isSynced ? 'fullscreen-lyric-line--clickable' : ''}`}
-                        style={{
-                          '--line-fill': isActive ? `${(activeLineProgress * 100).toFixed(1)}%` : isPast ? '100%' : '0%',
-                          filter: isSynced ? `blur(${blurAmount}px)` : 'none',
-                          opacity: isSynced ? opacityAmount : 0.85,
-                        } as React.CSSProperties}
-                        onClick={() => {
-                          if (line.time !== undefined) {
-                            isUserScrollingRef.current = false;
-                            setShowSyncButton(false);
-                            seekTo(line.time);
-                            window.setTimeout(() => scrollToActiveLine(true), 50);
-                          }
-                        }}
-                      >
-                        <span className="fullscreen-lyric-line__text">
-                          {line.text || '\u00A0'}
+                {sourceMenuOpen && (
+                  <div className="fullscreen-lyrics-source-menu">
+                    <div className="fullscreen-lyrics-source-menu__header">
+                      <div className="fullscreen-lyrics-source-menu__header-titles">
+                        <span className="fullscreen-lyrics-source-menu__title">Источник текста</span>
+                        <span className="fullscreen-lyrics-source-menu__subtitle">
+                          {availableSourcesWithText > 0
+                            ? `Найдено в ${availableSourcesWithText} из 4 провайдеров`
+                            : isAnySourceProbing
+                            ? 'Проверка доступности...'
+                            : 'Поиск по провайдерам'}
                         </span>
                       </div>
-                    );
-                  })}
-                </div>
+                      {preferredSource && (
+                        <button
+                          type="button"
+                          className="fullscreen-lyrics-source-menu__reset-btn"
+                          onClick={() => {
+                            setPreferredSource(null);
+                            setSourceMenuOpen(false);
+                          }}
+                          title="Вернуть автоматический выбор лучшего источника"
+                        >
+                          Авто
+                        </button>
+                      )}
+                    </div>
 
-                {/* Floating Return to Current Line button */}
-                {showSyncButton && activeLyricIndex >= 0 && (
-                  <button
-                    type="button"
-                    className="fullscreen-lyrics-sync-btn"
-                    onClick={() => {
-                      isUserScrollingRef.current = false;
-                      scrollToActiveLine(true);
-                    }}
-                    title="Вернуться к текущей строчке"
-                  >
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                      <polyline points="18 15 12 9 6 15" />
-                    </svg>
-                    <span>К текущей строчке</span>
-                  </button>
+                    <div className="fullscreen-lyrics-source-menu__list">
+                      {allProviderOptions.map((opt) => {
+                        const probe = sourcesAvailability[opt.id];
+                        const isAvailable = probe?.status === 'available';
+                        const isCurrent = lyricsInfo?.source === opt.id;
+                        const isManualSelected = preferredSource === opt.id;
+                        const statusBadge = getProviderStatus(opt.id);
+
+                        return (
+                          <button
+                            key={opt.id}
+                            type="button"
+                            className={`fullscreen-lyrics-source-menu__item ${
+                              isCurrent ? 'fullscreen-lyrics-source-menu__item--active' : ''
+                            } ${!isAvailable && probe?.status !== 'loading' ? 'fullscreen-lyrics-source-menu__item--unavailable' : ''}`}
+                            onClick={() => {
+                              setPreferredSource(opt.id);
+                              setSourceMenuOpen(false);
+                            }}
+                          >
+                            <div className="fullscreen-lyrics-source-menu__item-info">
+                              <div className="fullscreen-lyrics-source-menu__item-row">
+                                <span className="fullscreen-lyrics-source-menu__item-name">{opt.name}</span>
+                                <span
+                                  className={`fullscreen-lyrics-source-menu__item-badge fullscreen-lyrics-source-menu__item-badge--${statusBadge.class}`}
+                                >
+                                  {statusBadge.text}
+                                </span>
+                                {isCurrent && !isManualSelected && (
+                                  <span className="fullscreen-lyrics-source-menu__item-curr" title="Выбран автоматически">
+                                    (авто)
+                                  </span>
+                                )}
+                              </div>
+                              <span className="fullscreen-lyrics-source-menu__item-desc">{opt.desc}</span>
+                            </div>
+                            {isCurrent && (
+                              <span className="fullscreen-lyrics-source-menu__item-check">✓</span>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
                 )}
-              </>
-            ) : (
-              <div className="fullscreen-lyrics-pane__empty">
-                <p>Текст песни пока недоступен для этого трека</p>
               </div>
+
+              {/* Timing Offset Stepper Pill */}
+              <div
+                className="fullscreen-lyrics-offset-control"
+                title="Коррекция таймингов: сдвиг текста относительно музыки"
+              >
+                <button
+                  type="button"
+                  className="fullscreen-lyrics-offset-btn"
+                  onClick={() => adjustTimingOffset(-0.2)}
+                  title="Сдвинуть текст раньше на 0.2 сек"
+                >
+                  −0.2s
+                </button>
+                <button
+                  type="button"
+                  className={`fullscreen-lyrics-offset-val ${
+                    timingOffset !== 0 ? 'fullscreen-lyrics-offset-val--active' : ''
+                  }`}
+                  onClick={resetTimingOffset}
+                  title="Сбросить сдвиг таймингов"
+                >
+                  {timingOffset === 0
+                    ? '±0.0s'
+                    : `${timingOffset > 0 ? '+' : ''}${timingOffset.toFixed(1)}s`}
+                </button>
+                <button
+                  type="button"
+                  className="fullscreen-lyrics-offset-btn"
+                  onClick={() => adjustTimingOffset(0.2)}
+                  title="Сдвинуть текст позже на 0.2 сек"
+                >
+                  +0.2s
+                </button>
+              </div>
+            </div>
+
+            {/* Scrolling Lyrics Pane */}
+            <div
+              className="fullscreen-lyrics-pane"
+              ref={lyricsContainerRef}
+              onScroll={handleScroll}
+            >
+              {/* Audio-reactive ambient aura behind singing focus area */}
+              <div className="fullscreen-lyrics-pane__ambient" aria-hidden="true" />
+
+              {lyricsLoading ? (
+                <div className="fullscreen-lyrics-pane__loading">
+                  <div className="spinner" />
+                  <span>Загрузка текста...</span>
+                </div>
+              ) : parsedLyrics.length > 0 ? (
+                <>
+                  <div className="fullscreen-lyrics-pane__lines">
+                    {parsedLyrics.map((line, idx) => {
+                      const isActive = idx === activeLyricIndex;
+                      const isPast = activeLyricIndex >= 0 && idx < activeLyricIndex;
+                      const isFuture = activeLyricIndex >= 0 && idx > activeLyricIndex;
+                      const isSynced = line.time !== undefined;
+
+                      // Distance-based blur & focus depth (Apple Music style)
+                      const distance = activeLyricIndex >= 0 ? Math.abs(idx - activeLyricIndex) : 0;
+                      const blurAmount = isActive ? 0 : Math.min(2.2, distance * 0.4);
+                      const opacityAmount = isActive
+                        ? 1
+                        : isPast
+                        ? Math.max(0.35, 0.75 - distance * 0.08)
+                        : Math.max(0.18, 0.5 - distance * 0.08);
+
+                      return (
+                        <div
+                          key={idx}
+                          ref={(el) => {
+                            lineRefs.current[idx] = el;
+                          }}
+                          className={`fullscreen-lyric-line ${
+                            isActive
+                              ? 'fullscreen-lyric-line--active'
+                              : isPast
+                              ? 'fullscreen-lyric-line--past'
+                              : isFuture
+                              ? 'fullscreen-lyric-line--future'
+                              : ''
+                          } ${isSynced ? 'fullscreen-lyric-line--clickable' : ''}`}
+                          style={{
+                            '--line-fill': isActive ? `${(activeLineProgress * 100).toFixed(1)}%` : isPast ? '100%' : '0%',
+                            filter: isSynced ? `blur(${blurAmount}px)` : 'none',
+                            opacity: isSynced ? opacityAmount : 0.85,
+                          } as React.CSSProperties}
+                          onClick={() => {
+                            if (line.time !== undefined) {
+                              const targetAudioTime = Math.max(0, line.time - timingOffset);
+                              seekTo(targetAudioTime);
+                              setSmoothTime(targetAudioTime);
+                              isUserScrollingRef.current = false;
+                              setShowSyncButton(false);
+                              centerLine(idx, true);
+                            }
+                          }}
+                        >
+                          {line.hasEnhancedTimings && line.words.length > 0 ? (
+                            <span className="fullscreen-lyric-line__words">
+                              {line.words.map((word, wIdx) => {
+                                const isWordPast = effectiveSmoothTime >= word.endTime;
+                                const isWordActive =
+                                  effectiveSmoothTime >= word.time && effectiveSmoothTime < word.endTime;
+                                const wordDuration = Math.max(0.06, word.endTime - word.time);
+                                const wordFill = isWordPast
+                                  ? 100
+                                  : isWordActive
+                                  ? Math.min(
+                                      100,
+                                      Math.max(
+                                        0,
+                                        ((effectiveSmoothTime - word.time) / wordDuration) * 100
+                                      )
+                                    )
+                                  : 0;
+
+                                return (
+                                  <span
+                                    key={wIdx}
+                                    className={`fullscreen-lyric-word ${
+                                      isWordActive
+                                        ? 'fullscreen-lyric-word--active'
+                                        : isWordPast
+                                        ? 'fullscreen-lyric-word--past'
+                                        : 'fullscreen-lyric-word--future'
+                                    } ${!word.hasSpaceAfter ? 'fullscreen-lyric-word--no-space' : ''}`}
+                                    style={{ '--word-fill': `${wordFill.toFixed(1)}%` } as React.CSSProperties}
+                                  >
+                                    <span className="fullscreen-lyric-word__inner">{word.text}</span>
+                                  </span>
+                                );
+                              })}
+                            </span>
+                          ) : (
+                            <span className="fullscreen-lyric-line__text">
+                              {line.text || '\u00A0'}
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
+              ) : (
+                <div className="fullscreen-lyrics-pane__empty">
+                  <p>Текст песни пока недоступен для этого трека</p>
+                </div>
+              )}
+            </div>
+
+            {/* Floating Return to Current Line button - pinned outside the scroll container */}
+            {showSyncButton && activeLyricIndex >= 0 && (
+              <button
+                type="button"
+                className="fullscreen-lyrics-sync-btn"
+                onClick={() => {
+                  isUserScrollingRef.current = false;
+                  scrollToActiveLine(true);
+                }}
+                title="Вернуться к текущей строчке"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  {syncButtonDirection === 'down' ? (
+                    <polyline points="6 9 12 15 18 9" />
+                  ) : (
+                    <polyline points="18 15 12 9 6 15" />
+                  )}
+                </svg>
+                <span>К текущей строчке</span>
+              </button>
             )}
           </div>
         )}

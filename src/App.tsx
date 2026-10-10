@@ -1,5 +1,6 @@
 import { useEffect, useState, useRef } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { SplashScreen } from './components/SplashScreen';
 import { TitleBar } from './components/TitleBar';
 import { Sidebar } from './components/Sidebar';
 import { ToastContainer } from './components/Toast';
@@ -13,6 +14,7 @@ import { LibraryPage } from './features/library/components/LibraryPage';
 import { FavouritesPage } from './features/favourites/components/FavouritesPage';
 import { PlaylistsPage } from './features/playlists/components/PlaylistsPage';
 import { PlaylistDetailPage } from './features/playlists/components/PlaylistDetailPage';
+import { AddToPlaylistModal } from './features/playlists/components/AddToPlaylistModal';
 import { AlbumDetailPage } from './features/library/components/AlbumDetailPage';
 import { ArtistDetailPage } from './features/artists/components/ArtistDetailPage';
 import { SettingsPage } from './features/settings/components/SettingsPage';
@@ -23,17 +25,20 @@ import { usePlayerStore } from './features/player/playerStore';
 import { useAudioPlayer } from './features/player/useAudioPlayer';
 import { useHotkeys } from './features/player/useHotkeys';
 import { useMediaSession } from './features/player/useMediaSession';
+import { useDiscordPresence } from './features/player/useDiscordPresence';
 import { useAudioReactive } from './features/player/useAudioReactive';
 import { useFavouritesStore } from './features/favourites/favouritesStore';
 import { extractMonetThemeFromPalette, extractMonetFromImage, type MonetTheme } from './lib/monetPalette';
+import { usePlaylistModalStore } from './features/playlists/playlistModalStore';
 
 import { AuroraCanvas } from './components/AuroraCanvas';
 import { useAppearanceSettingsStore } from './features/settings/appearanceSettingsStore';
 
-function AppShell() {
+function AppShell({ isRevealed = true }: { isRevealed?: boolean }) {
   useAudioPlayer();
   useHotkeys();
   useMediaSession();
+  useDiscordPresence();
   useAudioReactive();
 
   const location = useLocation();
@@ -49,10 +54,12 @@ function AppShell() {
   const mainAreaRef = useRef<HTMLElement>(null);
   const auroraRef = useRef<HTMLDivElement>(null);
   const enableVisualEffects = useAppearanceSettingsStore((s) => s.enableVisualEffects);
+  const loadUserPlaylistIds = usePlaylistModalStore((s) => s.loadUserPlaylistIds);
 
   useEffect(() => {
     loadLikedIds();
-  }, [loadLikedIds]);
+    loadUserPlaylistIds();
+  }, [loadLikedIds, loadUserPlaylistIds]);
 
   useEffect(() => {
     if (isWaveMode && waveType === 'artist' && waveArtist) {
@@ -109,7 +116,11 @@ function AppShell() {
   }, [location.pathname]);
 
   return (
-    <div className={`app-layout ${isHome ? 'app-layout--home' : ''}`}>
+    <div
+      className={`app-layout ${isHome ? 'app-layout--home' : ''} ${
+        !isRevealed ? 'app-layout--hidden' : 'app-layout--revealing'
+      }`}
+    >
       {enableVisualEffects && (
         <div
           ref={auroraRef}
@@ -144,6 +155,7 @@ function AppShell() {
         </Routes>
       </main>
       <ToastContainer />
+      <AddToPlaylistModal />
       <PlayerBar />
       <FullscreenPlayer />
     </div>
@@ -152,64 +164,43 @@ function AppShell() {
 
 export default function App() {
   const { isLoading, isAuthenticated, isGuest, showLoginModal, checkAuth, closeLoginModal } = useAuthStore();
+  const [showSplash, setShowSplash] = useState(true);
+  const [isAppRevealed, setIsAppRevealed] = useState(false);
+  const [splashKey, setSplashKey] = useState(0);
 
   useEffect(() => {
     checkAuth();
   }, [checkAuth]);
 
-  if (isLoading) {
-    return (
-      <div
-        style={{
-          width: '100%',
-          height: '100%',
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          justifyContent: 'center',
-          background: 'var(--bg-primary)',
-        }}
-      >
-        <div
-          style={{
-            fontFamily: 'var(--font-display)',
-            fontSize: '2.5rem',
-            fontWeight: 800,
-            background: 'linear-gradient(135deg, var(--accent-light), var(--accent))',
-            WebkitBackgroundClip: 'text',
-            WebkitTextFillColor: 'transparent',
-            backgroundClip: 'text',
-            marginBottom: '16px',
-          }}
-        >
-          Звук
-        </div>
-        <div
-          style={{
-            width: '32px',
-            height: '32px',
-            border: '3px solid var(--border)',
-            borderTopColor: 'var(--accent)',
-            borderRadius: '50%',
-            animation: 'spin 0.8s linear infinite',
-          }}
-        />
-        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
-      </div>
-    );
-  }
-
-  if (!isAuthenticated && !isGuest) {
-    return (
-      <BrowserRouter>
-        <LoginPage />
-      </BrowserRouter>
-    );
-  }
+  useEffect(() => {
+    const handleReplay = () => {
+      setIsAppRevealed(false);
+      setSplashKey((k) => k + 1);
+      setShowSplash(true);
+    };
+    window.addEventListener('replay-splash', handleReplay);
+    return () => window.removeEventListener('replay-splash', handleReplay);
+  }, []);
 
   return (
-    <BrowserRouter>
-      <AppShell />
+    <>
+      {showSplash && (
+        <SplashScreen
+          key={splashKey}
+          isLoading={isLoading}
+          minDuration={2200}
+          onRevealing={() => setIsAppRevealed(true)}
+          onFinish={() => setShowSplash(false)}
+        />
+      )}
+
+      {!isAuthenticated && !isGuest ? (
+        <BrowserRouter>
+          <LoginPage />
+        </BrowserRouter>
+      ) : (
+        <BrowserRouter>
+          <AppShell isRevealed={isAppRevealed || !showSplash} />
       {showLoginModal && (
         <div
           style={{
@@ -248,5 +239,7 @@ export default function App() {
         </div>
       )}
     </BrowserRouter>
-  );
+  )}
+</>
+);
 }

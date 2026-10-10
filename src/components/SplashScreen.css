@@ -1,0 +1,196 @@
+/* ==========================================================================
+   Zvuk Desktop — Layered Full Glass Quarter Circles (Dissolve into Logo)
+   ========================================================================== */
+
+.splash-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 99999;
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: #06080b;
+  overflow: hidden;
+  user-select: none;
+  cursor: default;
+  transition: opacity 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+  will-change: opacity;
+}
+
+.splash-screen--revealing {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Atmospheric vignette */
+.splash-screen__ambient {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at 10% 90%, rgba(255, 255, 255, 0.08) 0%, rgba(0, 208, 116, 0.03) 40%, transparent 70%);
+  pointer-events: none;
+}
+
+/* 
+  Waves Layer:
+  Anchored strictly to the BOTTOM-LEFT corner of the screen.
+*/
+.splash-screen__waves-layer {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 100vw;
+  height: 100vh;
+  pointer-events: none;
+  transform-origin: 0 100%; /* Bottom-Left corner */
+  opacity: 1;
+  filter: blur(0px);
+  transition: opacity 0.85s cubic-bezier(0.4, 0, 0.2, 1),
+              filter 0.85s cubic-bezier(0.4, 0, 0.2, 1);
+  will-change: opacity, filter;
+}
+
+.splash-screen__svg-fullscreen {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 100vw;
+  height: 100vh;
+  overflow: visible;
+}
+
+/* 
+  Full Glass Sectors (Layered one above another):
+  Continuous breathing animation ensures waves never snap or reset when assembling begins!
+*/
+.splash-glass-sector {
+  transform-origin: 0 1000px; /* Corner point (0, 1000) */
+  will-change: transform, opacity;
+}
+
+.splash-glass-sector--base {
+  filter: drop-shadow(0 25px 60px rgba(0, 0, 0, 0.85))
+          drop-shadow(0 0 40px rgba(0, 208, 116, 0.15))
+          drop-shadow(0 2px 6px rgba(0, 0, 0, 0.5));
+  animation: sectorBreatheBaseLarge 3.4s cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite alternate;
+}
+
+.splash-glass-sector--top {
+  filter: drop-shadow(0 18px 45px rgba(0, 0, 0, 0.88))
+          drop-shadow(0 0 28px rgba(0, 208, 116, 0.22))
+          drop-shadow(0 2px 5px rgba(0, 0, 0, 0.5));
+  animation: sectorBreatheTopLarge 3.4s cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite alternate 0.3s;
+}
+
+/* 
+  --- Assembling phase: 
+  Waves melt away in place seamlessly via pure transition without restarting or snapping.
+--- */
+.splash-screen--assembling .splash-screen__waves-layer,
+.splash-screen--revealing .splash-screen__waves-layer {
+  opacity: 0 !important;
+  filter: blur(16px) !important;
+  visibility: hidden;
+  pointer-events: none !important;
+  transition: opacity 0.85s cubic-bezier(0.4, 0, 0.2, 1),
+              filter 0.85s cubic-bezier(0.4, 0, 0.2, 1),
+              visibility 0s linear 0.85s;
+}
+
+/* Central Target: The Full Zvuk Logo */
+.splash-screen__center-logo-box {
+  position: relative;
+  width: 170px;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+/* Original Zvuk Full Logo smoothly dissolves in from the center */
+.splash-screen__final-logo {
+  position: absolute;
+  width: 170px;
+  height: auto;
+  opacity: 0;
+  transform: scale(0.92);
+  filter: blur(10px) drop-shadow(0 4px 20px rgba(0, 208, 116, 0));
+  transition: opacity 0.8s cubic-bezier(0.16, 1, 0.3, 1),
+              transform 0.8s cubic-bezier(0.16, 1, 0.3, 1),
+              filter 0.8s cubic-bezier(0.16, 1, 0.3, 1);
+  will-change: transform, opacity, filter;
+}
+
+.splash-screen__final-logo img {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.splash-screen--assembling .splash-screen__final-logo,
+.splash-screen--revealing .splash-screen__final-logo {
+  opacity: 1;
+  transform: scale(1);
+  filter: blur(0px) drop-shadow(0 10px 30px rgba(0, 208, 116, 0.45));
+}
+
+/* Soft Emerald Backlight Aura accompanying the logo emergence */
+.splash-screen__burst-flash {
+  position: absolute;
+  width: 220px;
+  height: 76px;
+  border-radius: 38px;
+  background: radial-gradient(ellipse at center, rgba(0, 230, 130, 0.75) 0%, rgba(0, 208, 116, 0.25) 45%, transparent 75%);
+  opacity: 0;
+  transform: scale(0.7);
+  pointer-events: none;
+  filter: blur(18px);
+  transition: opacity 0.8s cubic-bezier(0.16, 1, 0.3, 1),
+              transform 0.8s cubic-bezier(0.16, 1, 0.3, 1);
+  will-change: transform, opacity;
+}
+
+.splash-screen--assembling .splash-screen__burst-flash {
+  opacity: 0.85;
+  transform: scale(1.3);
+}
+
+.splash-screen--revealing .splash-screen__burst-flash {
+  opacity: 0;
+  transform: scale(1.5);
+  transition: opacity 0.75s ease, transform 0.75s ease;
+}
+
+/* --- High Amplitude Breathing Animations --- */
+@keyframes sectorBreatheBaseLarge {
+  0% {
+    transform: scale(0.91);
+    opacity: 0.75;
+  }
+  100% {
+    transform: scale(1.14);
+    opacity: 1;
+  }
+}
+
+@keyframes sectorBreatheTopLarge {
+  0% {
+    transform: scale(0.89);
+    opacity: 0.8;
+  }
+  100% {
+    transform: scale(1.18);
+    opacity: 1;
+  }
+}
+
+@keyframes glassSheenGleam {
+  0% {
+    opacity: 0.35;
+  }
+  100% {
+    opacity: 0.95;
+  }
+}

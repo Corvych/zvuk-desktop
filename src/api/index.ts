@@ -124,6 +124,12 @@ export interface ArtistDetail {
   relatedArtists: RelatedArtist[];
 }
 
+export interface ArtistReleasesPage {
+  releases: ArtistRelease[];
+  hasMoreReleases: boolean;
+  endCursor?: string | null;
+}
+
 export interface ArtistRadioResult {
   cursor: number;
   tracks: Track[];
@@ -135,11 +141,34 @@ export interface Playlist {
   title: string;
   description: string | null;
   cover_url: string | null;
+  cover_urls?: string[] | null;
   track_count: number;
   duration: number;
   is_editable: boolean;
+  is_public?: boolean | null;
   owner: string | null;
   tracks: Track[] | null;
+  track_ids?: string[] | null;
+}
+
+export interface ShortPlaylist {
+  id: string;
+  title: string;
+}
+
+export interface ShortPlaylistsPage {
+  endCursor: string | null;
+  hasNextPage: boolean;
+}
+
+export interface ShortPlaylistsResult {
+  playlists: ShortPlaylist[];
+  page: ShortPlaylistsPage;
+}
+
+export interface PlaylistItemInput {
+  item_id: string;
+  type: string;
 }
 
 export interface SearchResults {
@@ -237,11 +266,17 @@ export const logout = () =>
 export const getTrack = (id: number) =>
   invoke<Track>('get_track', { id });
 
+export const getTracksByIds = (ids: (string | number)[]) =>
+  invoke<Track[]>('get_tracks_by_ids', { ids: ids.map(String) });
+
 export const getAlbum = (id: number) =>
   invoke<Album>('get_album', { id });
 
 export const getArtist = (id: number) =>
   invoke<ArtistDetail>('get_artist', { id });
+
+export const getArtistReleases = (id: number, cursor?: string, limit?: number) =>
+  invoke<ArtistReleasesPage>('get_artist_releases', { id, cursor, limit });
 
 export const getStreamUrl = (id: number, quality: string) =>
 
@@ -272,6 +307,42 @@ export const createPlaylist = (title: string, description?: string) =>
 
 export const deletePlaylist = (id: number) =>
   invoke<void>('delete_playlist', { id });
+
+export const getUserShortPlaylists = (limit = 15, offset?: string | null) =>
+  invoke<ShortPlaylistsResult>('get_user_short_playlists', { limit, offset: offset || null });
+
+export const addItemsToPlaylist = (
+  id: string | number,
+  items: PlaylistItemInput[] | (string | number)[]
+) => {
+  const formattedItems: PlaylistItemInput[] = items.map((it) => {
+    if (typeof it === 'object' && it !== null && 'item_id' in it) {
+      return it as PlaylistItemInput;
+    }
+    return { item_id: String(it), type: 'track' };
+  });
+  return invoke<void>('add_items_to_playlist', { id: String(id), items: formattedItems });
+};
+
+export const updatePlaylist = (
+  id: string | number,
+  name: string,
+  isPublic: boolean,
+  items: PlaylistItemInput[] | (string | number)[]
+) => {
+  const formattedItems: PlaylistItemInput[] = items.map((it) => {
+    if (typeof it === 'object' && it !== null && 'item_id' in it) {
+      return it as PlaylistItemInput;
+    }
+    return { item_id: String(it), type: 'track' };
+  });
+  return invoke<void>('update_playlist', {
+    id: String(id),
+    name,
+    is_public: isPublic,
+    items: formattedItems,
+  });
+};
 
 export const addTrackToPlaylist = (playlistId: number, trackId: number) =>
   invoke<void>('add_track_to_playlist', { playlistId, trackId });
@@ -365,5 +436,68 @@ export const getCacheLimitMb = () =>
 
 export const setCacheLimitMb = (limitMb: number) =>
   invoke<void>('set_cache_limit_mb', { limitMb });
+
+export type CoverSize = 'small' | 'medium' | 'large';
+
+/**
+ * Returns image URL with the specified resolution size query parameter.
+ * - 'small': 300x300
+ * - 'medium': 600x600
+ * - 'large': 900x900
+ */
+export function getCoverUrl(
+  url?: string | null,
+  size: CoverSize = 'large'
+): string {
+  if (!url) return '';
+
+  if (url.includes('{size}')) {
+    return url.replace('{size}', size);
+  }
+
+  if (/[?&]size=[^&]+/.test(url)) {
+    return url.replace(/([?&]size=)[^&]+/, `$1${size}`);
+  }
+
+  const separator = url.includes('?') ? '&' : '?';
+  return `${url}${separator}size=${size}`;
+}
+
+// ─── Discord RPC ────────────────────────────────────────────────────────────
+
+export interface DiscordRpcSettings {
+  enabled: boolean;
+  client_id: string;
+  show_buttons: boolean;
+  show_pause: boolean;
+}
+
+export interface DiscordActivity {
+  title: string;
+  artist: string;
+  album?: string | null;
+  cover_url?: string | null;
+  duration?: number;
+  position?: number;
+  is_playing: boolean;
+  track_id?: number | null;
+}
+
+export interface DiscordStatus {
+  connected: boolean;
+  error?: string | null;
+}
+
+export const getDiscordSettings = () =>
+  invoke<DiscordRpcSettings>('get_discord_settings');
+
+export const setDiscordSettings = (settings: DiscordRpcSettings) =>
+  invoke<void>('set_discord_settings', { settings });
+
+export const updateDiscordActivity = (activity: DiscordActivity | null) =>
+  invoke<void>('update_discord_activity', { activity });
+
+export const getDiscordStatus = () =>
+  invoke<DiscordStatus>('get_discord_status');
 
 

@@ -7,6 +7,7 @@ import { formatTime, pluralizeTracks } from '../../../lib/formatters';
 import { ArtistLinks } from '../../../components/ArtistLinks';
 import { extractMonetFromImage, type MonetTheme } from '../../../lib/monetPalette';
 import { LikeButton } from '../../../components/LikeButton';
+import { usePlaylistModalStore } from '../../playlists/playlistModalStore';
 
 type Tab = 'tracks' | 'albums';
 
@@ -92,6 +93,12 @@ export function FavouritesPage() {
         setTracksHasNext(res.has_next);
         tracksStateRef.current.hasNext = res.has_next;
         tracksStateRef.current.offset = nextOffset;
+
+        // If player is playing from favourites, append new tracks to its queue
+        const { queueContext, appendToQueue } = usePlayerStore.getState();
+        if (queueContext?.type === 'favourites') {
+          appendToQueue(res.items);
+        }
       }
     } catch (err) {
       console.error('[Favourites] Error loading liked tracks:', err);
@@ -186,11 +193,35 @@ export function FavouritesPage() {
     return () => observer.disconnect();
   }, [likedAlbums.length, loadMoreAlbums]);
 
+  // Synchronize likedTracks if player loaded more tracks in background
+  const queue = usePlayerStore((s) => s.queue);
+  const queueContext = usePlayerStore((s) => s.queueContext);
+
+  useEffect(() => {
+    if (queueContext?.type === 'favourites' && queue.length > likedTracks.length) {
+      setLikedTracks((prev) => {
+        const existingIds = new Set(prev.map((t) => String(t.id)));
+        const newTracks = queue.filter((t) => !existingIds.has(String(t.id)));
+        if (newTracks.length === 0) return prev;
+        const next = [...prev, ...newTracks];
+        tracksStateRef.current.offset = next.length;
+        setTracksOffset(next.length);
+        return next;
+      });
+    }
+  }, [queue, queueContext, likedTracks.length]);
+
   const handleTrackClick = (track: Track, idx: number) => {
     if (currentTrack?.id === track.id) {
       togglePlay();
     } else {
-      setQueue(likedTracks, idx);
+      const hasNext = tracksStateRef.current.hasNext || (tracksTotal ? likedTracks.length < tracksTotal : false);
+      setQueue(likedTracks, idx, {
+        type: 'favourites',
+        offset: likedTracks.length,
+        hasNext,
+        total: tracksTotal ?? undefined,
+      });
     }
   };
 
@@ -200,13 +231,25 @@ export function FavouritesPage() {
       togglePlay();
       return;
     }
-    setQueue(likedTracks, 0);
+    const hasNext = tracksStateRef.current.hasNext || (tracksTotal ? likedTracks.length < tracksTotal : false);
+    setQueue(likedTracks, 0, {
+      type: 'favourites',
+      offset: likedTracks.length,
+      hasNext,
+      total: tracksTotal ?? undefined,
+    });
   };
 
   const handleShufflePlay = () => {
     if (likedTracks.length === 0) return;
     const shuffled = [...likedTracks].sort(() => Math.random() - 0.5);
-    setQueue(shuffled, 0);
+    const hasNext = tracksStateRef.current.hasNext || (tracksTotal ? likedTracks.length < tracksTotal : false);
+    setQueue(shuffled, 0, {
+      type: 'favourites',
+      offset: likedTracks.length,
+      hasNext,
+      total: tracksTotal ?? undefined,
+    });
   };
 
   const loadFavoriteFlow = useCallback(() => {
@@ -623,6 +666,20 @@ export function FavouritesPage() {
                     </div>
 
                     <div className="favorites-table__col-time">
+                      <button
+                        type="button"
+                        className="detail-row-action-btn"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          usePlaylistModalStore.getState().openAddToPlaylist(track);
+                        }}
+                        title="Добавить в плейлист"
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <line x1="12" y1="5" x2="12" y2="19" />
+                          <line x1="5" y1="12" x2="19" y2="12" />
+                        </svg>
+                      </button>
                       <LikeButton
                         isLiked={trackLiked}
                         onToggle={() => toggleLikeTrack(track.id)}

@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { getArtist, getAlbum, getArtistRadio, type ArtistDetail, type ArtistRelease } from '../../../api';
+import { getArtist, getAlbum, getArtistRadio, getArtistReleases, type ArtistDetail, type ArtistRelease } from '../../../api';
 
 import { usePlayerStore } from '../../player/playerStore';
 import { useFavouritesStore } from '../../favourites/favouritesStore';
@@ -10,6 +10,8 @@ import { extractMonetThemeFromPalette, extractMonetFromImage, type MonetTheme } 
 import { useAudioReactive } from '../../player/useAudioReactive';
 import { LikeButton } from '../../../components/LikeButton';
 import { HeartIcon } from '../../../components/HeartIcon';
+import { ShareIcon } from '../../../components/ShareIcon';
+import { showToast } from '../../../components/Toast';
 
 function formatFollowersCount(count: number): string {
   if (count >= 1_000_000) {
@@ -33,8 +35,13 @@ export function ArtistDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [hoveredTrackIndex, setHoveredTrackIndex] = useState<number | null>(null);
   const [releaseFilter, setReleaseFilter] = useState<'all' | 'album' | 'single'>('all');
+  const [releases, setReleases] = useState<ArtistRelease[]>([]);
+  const [hasMoreReleases, setHasMoreReleases] = useState(false);
+  const [endCursor, setEndCursor] = useState<string | null>(null);
+  const [loadingMoreReleases, setLoadingMoreReleases] = useState(false);
   const [bioExpanded, setBioExpanded] = useState(false);
   const [radioLoading, setRadioLoading] = useState(false);
+  const [showAllPopular, setShowAllPopular] = useState(false);
 
   const [monetTheme, setMonetTheme] = useState<MonetTheme>(() =>
     extractMonetThemeFromPalette(null)
@@ -70,9 +77,16 @@ export function ArtistDetailPage() {
       try {
         setLoading(true);
         setError(null);
+        setShowAllPopular(false);
+        setReleases([]);
+        setHasMoreReleases(false);
+        setEndCursor(null);
         const data = await getArtist(Number(id));
         if (isMounted) {
           setArtist(data);
+          setReleases(data.releases || []);
+          setHasMoreReleases(data.hasMoreReleases || false);
+          setEndCursor(data.endCursor || null);
         }
       } catch (err: any) {
         console.error('[ArtistDetailPage] Failed to load artist:', err);
@@ -118,18 +132,18 @@ export function ArtistDetailPage() {
     if (!artist) return null;
     return (
       artist.actualRelease ||
-      artist.releases?.find((r) => r.releaseType === 'album') ||
-      artist.releases?.[0] ||
+      releases.find((r) => r.releaseType === 'album') ||
+      releases[0] ||
       null
     );
-  }, [artist]);
+  }, [artist, releases]);
 
   // Cohesive stack of album/track covers for "Поток по артисту"
   const flowCovers = useMemo(() => {
     const covers: string[] = [];
     if (artist?.imageUrl) covers.push(artist.imageUrl);
-    if (artist?.releases) {
-      for (const r of artist.releases) {
+    if (releases.length > 0) {
+      for (const r of releases) {
         if (r.coverUrl && !covers.includes(r.coverUrl)) {
           covers.push(r.coverUrl);
           if (covers.length >= 3) break;
@@ -145,13 +159,13 @@ export function ArtistDetailPage() {
       }
     }
     return covers;
-  }, [artist]);
+  }, [artist, releases]);
 
   const popularTracks = artist?.popularTracks || [];
-  const maxPopular = Math.min(12, popularTracks.length);
-  const midPoint = Math.ceil(maxPopular / 2);
+  const displayedCount = showAllPopular ? popularTracks.length : Math.min(12, popularTracks.length);
+  const midPoint = Math.ceil(displayedCount / 2);
   const leftTracks = popularTracks.slice(0, midPoint);
-  const rightTracks = popularTracks.slice(midPoint, maxPopular);
+  const rightTracks = popularTracks.slice(midPoint, displayedCount);
 
   const isCurrentArtistPlaying =
     isPlaying && popularTracks.some((t) => t.id === currentTrack?.id);
@@ -244,10 +258,43 @@ export function ArtistDetailPage() {
   };
 
   const filteredReleases = useMemo(() => {
-    if (!artist?.releases) return [];
-    if (releaseFilter === 'all') return artist.releases;
-    return artist.releases.filter((r) => r.releaseType === releaseFilter);
-  }, [artist?.releases, releaseFilter]);
+    if (!releases || releases.length === 0) return [];
+    if (releaseFilter === 'all') return releases;
+    if (releaseFilter === 'single') {
+      return releases.filter((r) => {
+        const t = (r.releaseType || '').toLowerCase();
+        return t === 'single' || t === 'ep';
+      });
+    }
+    if (releaseFilter === 'album') {
+      return releases.filter((r) => {
+        const t = (r.releaseType || '').toLowerCase();
+        return t === 'album' || t === 'compilation' || (t !== 'single' && t !== 'ep');
+      });
+    }
+    return releases.filter((r) => (r.releaseType || '').toLowerCase() === releaseFilter);
+  }, [releases, releaseFilter]);
+
+  const handleLoadMoreReleases = async () => {
+    if (!id || !hasMoreReleases || loadingMoreReleases) return;
+    try {
+      setLoadingMoreReleases(true);
+      const res = await getArtistReleases(Number(id), endCursor || undefined, 50);
+      if (res?.releases && res.releases.length > 0) {
+        setReleases((prev) => {
+          const existingIds = new Set(prev.map((r) => r.id));
+          const uniqueNew = res.releases.filter((r) => !existingIds.has(r.id));
+          return [...prev, ...uniqueNew];
+        });
+      }
+      setHasMoreReleases(res.hasMoreReleases);
+      setEndCursor(res.endCursor || null);
+    } catch (err) {
+      console.error('[ArtistDetailPage] Failed to load more releases:', err);
+    } finally {
+      setLoadingMoreReleases(false);
+    }
+  };
 
   if (loading) {
     return (
@@ -404,6 +451,18 @@ export function ArtistDetailPage() {
                 <path d="M4 4L9 9" />
               </svg>
             </button>
+
+            {/* Share Artist button */}
+            <button
+              className="artist-hero__shuffle-btn"
+              onClick={() => {
+                navigator.clipboard.writeText(`https://zvuk.com/artist/${artist.id}`);
+                showToast('Ссылка на артиста скопирована', 'success');
+              }}
+              title="Поделиться артистом"
+            >
+              <ShareIcon size={18} />
+            </button>
           </div>
         </div>
 
@@ -535,14 +594,28 @@ export function ArtistDetailPage() {
       {/* ─── "Популярные треки" 2-Column Grid ────────────────────────────────── */}
       {popularTracks.length > 0 && (
         <section className="mb-xl">
-          <div className="artist-section-title">
-            <span>Популярные треки</span>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M9 18L15 12L9 6" />
-            </svg>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+            <div className="artist-section-title" style={{ marginBottom: 0 }}>
+              <span>Популярные треки</span>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M9 18L15 12L9 6" />
+              </svg>
+            </div>
+            {popularTracks.length > 12 && (
+              <button
+                className="btn btn--ghost"
+                style={{ fontSize: '13px', color: 'var(--accent)', cursor: 'pointer' }}
+                onClick={() => setShowAllPopular((prev) => !prev)}
+              >
+                {showAllPopular ? 'Свернуть' : `Показать все (${popularTracks.length}) →`}
+              </button>
+            )}
           </div>
 
-          <div className="artist-popular-columns">
+          <div
+            className="artist-popular-columns"
+            style={{ marginBottom: popularTracks.length > 12 && !showAllPopular ? '16px' : undefined }}
+          >
             {/* Column 1 (Left 6 tracks) */}
             <div className="artist-popular-col">
               {leftTracks.map((track, colIdx) => {
@@ -699,14 +772,48 @@ export function ArtistDetailPage() {
               </div>
             )}
           </div>
+
+          {popularTracks.length > 12 && (
+            <div style={{ marginTop: '-8px', marginBottom: '32px' }}>
+              <button
+                className="btn btn--ghost"
+                style={{
+                  fontSize: '13px',
+                  fontWeight: 600,
+                  color: 'var(--text-secondary)',
+                  cursor: 'pointer',
+                  padding: '6px 16px',
+                  borderRadius: '20px',
+                  background: 'rgba(255, 255, 255, 0.05)',
+                  transition: 'all 0.2s ease',
+                  border: '1px solid rgba(255, 255, 255, 0.08)',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.color = '#fff';
+                  e.currentTarget.style.background = 'rgba(255, 255, 255, 0.12)';
+                  e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.2)';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.color = 'var(--text-secondary)';
+                  e.currentTarget.style.background = 'rgba(255, 255, 255, 0.05)';
+                  e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.08)';
+                }}
+                onClick={() => setShowAllPopular((prev) => !prev)}
+              >
+                {showAllPopular ? 'Свернуть' : `Показать ещё (${popularTracks.length - 12})`}
+              </button>
+            </div>
+          )}
         </section>
       )}
 
       {/* ─── Discography / Releases ─────────────────────────────────────────── */}
-      {artist.releases && artist.releases.length > 0 && (
+      {releases.length > 0 && (
         <section className="mb-lg">
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-            <h3 style={{ margin: 0 }}>Дискография</h3>
+            <h3 style={{ margin: 0 }}>
+              Дискография <span style={{ fontSize: '14px', color: 'var(--text-secondary)', fontWeight: 400 }}>({filteredReleases.length})</span>
+            </h3>
             <div className="tabs" style={{ marginBottom: 0, borderBottom: 'none' }}>
               <button
                 className={`tabs__tab ${releaseFilter === 'all' ? 'tabs__tab--active' : ''}`}
@@ -729,77 +836,139 @@ export function ArtistDetailPage() {
             </div>
           </div>
 
-          <div className="card-grid">
-            {filteredReleases.map((release) => {
-              const releaseYear = release.date ? release.date.slice(0, 4) : null;
-
-              return (
-                <div
-                  key={release.id}
-                  className="card"
-                  onClick={() => navigate(`/album/${release.id}`)}
-                >
-                  <div className="card__cover">
-                    {release.coverUrl ? (
-                      <img
-                        src={release.coverUrl}
-                        alt={release.title}
-                        style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                      />
-                    ) : (
-                      <div
-                        style={{
-                          width: '100%',
-                          height: '100%',
-                          background: 'var(--bg-card-hover)',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                        }}
-                      >
-                        💿
-                      </div>
-                    )}
-                    <button
-                      className="card__play-btn card__play-overlay"
-                      title="Воспроизвести"
-                      onClick={(e) => handlePlayRelease(e, release)}
-                    >
-                      <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-                        <path d="M8 5v14l11-7z" />
-                      </svg>
-                    </button>
-                  </div>
-
-                  <div className="card__title" title={release.title}>
-                    {release.title}
-                  </div>
-
-                  <div className="card__subtitle" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                    {release.explicit && (
-                      <span
-                        style={{
-                          fontSize: '9px',
-                          fontWeight: 700,
-                          padding: '1px 3px',
-                          borderRadius: '2px',
-                          background: 'rgba(255,255,255,0.15)',
-                          color: 'var(--text-muted)',
-                          lineHeight: 1,
-                        }}
-                      >
-                        E
-                      </span>
-                    )}
-                    <span>
-                      {releaseYear ? `${releaseYear} · ` : ''}
-                      {release.releaseType === 'single' ? 'Сингл' : 'Альбом'}
-                    </span>
-                  </div>
+          {filteredReleases.length === 0 ? (
+            <div style={{ padding: '32px 0', textAlign: 'center', color: 'var(--text-secondary)', fontSize: '14px' }}>
+              <span>В этой категории пока нет загруженных релизов.</span>
+              {hasMoreReleases && (
+                <div style={{ marginTop: '12px' }}>
+                  <button
+                    className="btn btn--ghost"
+                    style={{
+                      fontSize: '13px',
+                      color: 'var(--accent)',
+                      cursor: 'pointer',
+                    }}
+                    disabled={loadingMoreReleases}
+                    onClick={handleLoadMoreReleases}
+                  >
+                    {loadingMoreReleases ? 'Загрузка...' : 'Загрузить ещё релизы →'}
+                  </button>
                 </div>
-              );
-            })}
-          </div>
+              )}
+            </div>
+          ) : (
+            <div className="card-grid">
+              {filteredReleases.map((release) => {
+                const releaseYear = release.date ? release.date.slice(0, 4) : null;
+                const releaseTypeBadge = (() => {
+                  const t = (release.releaseType || '').toLowerCase();
+                  if (t === 'single') return 'Сингл';
+                  if (t === 'ep') return 'EP';
+                  if (t === 'compilation') return 'Сборник';
+                  return 'Альбом';
+                })();
+
+                return (
+                  <div
+                    key={release.id}
+                    className="card"
+                    onClick={() => navigate(`/album/${release.id}`)}
+                  >
+                    <div className="card__cover">
+                      {release.coverUrl ? (
+                        <img
+                          src={release.coverUrl}
+                          alt={release.title}
+                          style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                        />
+                      ) : (
+                        <div
+                          style={{
+                            width: '100%',
+                            height: '100%',
+                            background: 'var(--bg-card-hover)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                          }}
+                        >
+                          💿
+                        </div>
+                      )}
+                      <button
+                        className="card__play-btn card__play-overlay"
+                        title="Воспроизвести"
+                        onClick={(e) => handlePlayRelease(e, release)}
+                      >
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                          <path d="M8 5v14l11-7z" />
+                        </svg>
+                      </button>
+                    </div>
+
+                    <div className="card__title" title={release.title}>
+                      {release.title}
+                    </div>
+
+                    <div className="card__subtitle" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                      {release.explicit && (
+                        <span
+                          style={{
+                            fontSize: '9px',
+                            fontWeight: 700,
+                            padding: '1px 3px',
+                            borderRadius: '2px',
+                            background: 'rgba(255,255,255,0.15)',
+                            color: 'var(--text-muted)',
+                            lineHeight: 1,
+                          }}
+                        >
+                          E
+                        </span>
+                      )}
+                      <span>
+                        {releaseYear ? `${releaseYear} · ` : ''}
+                        {releaseTypeBadge}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {hasMoreReleases && (
+            <div style={{ display: 'flex', justifyContent: 'center', marginTop: '24px' }}>
+              <button
+                className="btn btn--ghost"
+                style={{
+                  fontSize: '13px',
+                  fontWeight: 600,
+                  color: 'var(--text-secondary)',
+                  cursor: 'pointer',
+                  padding: '8px 24px',
+                  borderRadius: '20px',
+                  background: 'rgba(255, 255, 255, 0.05)',
+                  transition: 'all 0.2s ease',
+                  border: '1px solid rgba(255, 255, 255, 0.08)',
+                }}
+                disabled={loadingMoreReleases}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.color = '#fff';
+                  e.currentTarget.style.background = 'rgba(255, 255, 255, 0.12)';
+                  e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.2)';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.color = 'var(--text-secondary)';
+                  e.currentTarget.style.background = 'rgba(255, 255, 255, 0.05)';
+                  e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.08)';
+                }}
+                onClick={handleLoadMoreReleases}
+              >
+                {loadingMoreReleases ? 'Загрузка...' : 'Загрузить ещё релизы'}
+              </button>
+            </div>
+          )}
         </section>
       )}
 

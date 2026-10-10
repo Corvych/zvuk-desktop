@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getLikedTracks, getLikedAlbums, getUserPlaylists, type Album, type Playlist } from '../../../api';
+import { PlaylistCover } from '../../playlists/components/PlaylistCover';
 
 export function LibraryPage() {
   const navigate = useNavigate();
@@ -121,13 +122,7 @@ export function LibraryPage() {
             playlists.map((playlist) => (
               <div key={playlist.id} className="card" onClick={() => navigate(`/playlist/${playlist.id}`)}>
                 <div className="card__cover">
-                  {playlist.cover_url ? (
-                    <img src={playlist.cover_url} alt={playlist.title} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                  ) : (
-                    <div style={{ width: '100%', height: '100%', background: 'var(--bg-card-hover)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                      🎶
-                    </div>
-                  )}
+                  <PlaylistCover playlist={playlist} />
                   <button className="card__play-btn" title="Открыть плейлист" onClick={(e) => { e.stopPropagation(); navigate(`/playlist/${playlist.id}`); }}>
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z" /></svg>
                   </button>

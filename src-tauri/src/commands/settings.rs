@@ -87,3 +87,44 @@ pub fn set_cache_limit_mb(limit_mb: u64) -> Result<(), String> {
 
     Ok(())
 }
+
+pub fn get_saved_discord_settings() -> crate::discord_rpc::DiscordRpcSettings {
+    if let Some(path) = get_settings_path() {
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) {
+                if let Some(rpc_val) = val.get("discord_rpc") {
+                    if let Ok(mut parsed) = serde_json::from_value::<crate::discord_rpc::DiscordRpcSettings>(rpc_val.clone()) {
+                        if parsed.client_id == "1084179647874474125" || parsed.client_id == "1556060308911689789" {
+                            parsed.client_id = String::new();
+                        }
+                        return parsed;
+                    }
+                }
+            }
+        }
+    }
+    crate::discord_rpc::DiscordRpcSettings::default()
+}
+
+pub fn save_discord_settings_to_file(rpc_settings: &crate::discord_rpc::DiscordRpcSettings) -> Result<(), String> {
+    if let Some(path) = get_settings_path() {
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+
+        let mut settings = serde_json::json!({});
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) {
+                if val.is_object() {
+                    settings = val;
+                }
+            }
+        }
+
+        settings["discord_rpc"] = serde_json::to_value(rpc_settings).unwrap_or_default();
+
+        std::fs::write(&path, settings.to_string())
+            .map_err(|e| format!("Не удалось сохранить настройки Discord RPC: {}", e))?;
+    }
+    Ok(())
+}

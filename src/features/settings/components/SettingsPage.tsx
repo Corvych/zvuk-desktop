@@ -4,6 +4,8 @@ import { usePlayerStore, type AudioQuality } from '../../player/playerStore';
 import { showToast } from '../../../components/Toast';
 import { useLyricsSettingsStore } from '../lyricsSettingsStore';
 import { useAppearanceSettingsStore } from '../appearanceSettingsStore';
+import { useDiscordSettingsStore } from '../discordSettingsStore';
+import { openUrl } from '@tauri-apps/plugin-opener';
 import { getCacheLimitMb, setCacheLimitMb } from '../../../api';
 
 const QUALITY_OPTIONS: { label: string; description: string; value: AudioQuality }[] = [
@@ -39,14 +41,40 @@ export function SettingsPage() {
   const { quality, setQuality } = usePlayerStore();
   const {
     enableZvuk,
+    enableBetterLyrics,
+    enableNetease,
     enableLrclib,
+    preferWordSync,
     priority: lyricsPriority,
     setEnableZvuk,
+    setEnableBetterLyrics,
+    setEnableNetease,
     setEnableLrclib,
+    setPreferWordSync,
     setPriority: setLyricsPriority,
   } = useLyricsSettingsStore();
 
   const { enableVisualEffects, setEnableVisualEffects } = useAppearanceSettingsStore();
+
+  const {
+    enabled: discordEnabled,
+    clientId: discordClientId,
+    showButtons: discordShowButtons,
+    showPause: discordShowPause,
+    connected: discordConnected,
+    setEnabled: setDiscordEnabled,
+    setClientId: setDiscordClientId,
+    setShowButtons: setDiscordShowButtons,
+    setShowPause: setDiscordShowPause,
+    resetClientId: resetDiscordClientId,
+    checkStatus: checkDiscordStatus,
+  } = useDiscordSettingsStore();
+
+  const [inputClientId, setInputClientId] = useState(discordClientId);
+
+  useEffect(() => {
+    setInputClientId(discordClientId);
+  }, [discordClientId]);
 
   const [cacheLimit, setCacheLimit] = useState<number>(500);
 
@@ -363,12 +391,42 @@ export function SettingsPage() {
         {/* Source Toggles */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '18px' }}>
           <ToggleRow
+            label="Better Lyrics (LRC.RED)"
+            description="Глобальная библиотека Apple Music & Better Lyrics с поддержкой слоговой и пословной синхронизации (TTML/Enhanced LRC)"
+            checked={enableBetterLyrics}
+            badge="Word-Sync"
+            onChange={(val) => {
+              if (!val && !enableZvuk && !enableNetease && !enableLrclib) {
+                showToast('Хотя бы один источник текстов должен оставаться активным', 'warning');
+                return;
+              }
+              setEnableBetterLyrics(val);
+              showToast(val ? 'Источник Better Lyrics включен' : 'Источник Better Lyrics отключен', 'info');
+            }}
+          />
+
+          <ToggleRow
+            label="NetEase Cloud Music"
+            description="Каталог с богатой поддержкой пословного караоке (YRC) для зарубежной, русской и азиатской музыки"
+            checked={enableNetease}
+            badge="YRC Sync"
+            onChange={(val) => {
+              if (!val && !enableZvuk && !enableBetterLyrics && !enableLrclib) {
+                showToast('Хотя бы один источник текстов должен оставаться активным', 'warning');
+                return;
+              }
+              setEnableNetease(val);
+              showToast(val ? 'Источник NetEase включен' : 'Источник NetEase отключен', 'info');
+            }}
+          />
+
+          <ToggleRow
             label="Каталог Звук"
             description="Официальные синхронизированные и статичные тексты сервиса Звук"
             checked={enableZvuk}
             badge="Официальный"
             onChange={(val) => {
-              if (!val && !enableLrclib) {
+              if (!val && !enableBetterLyrics && !enableNetease && !enableLrclib) {
                 showToast('Хотя бы один источник текстов должен оставаться активным', 'warning');
                 return;
               }
@@ -383,7 +441,7 @@ export function SettingsPage() {
             checked={enableLrclib}
             badge="LRCLIB"
             onChange={(val) => {
-              if (!val && !enableZvuk) {
+              if (!val && !enableZvuk && !enableBetterLyrics && !enableNetease) {
                 showToast('Хотя бы один источник текстов должен оставаться активным', 'warning');
                 return;
               }
@@ -391,31 +449,253 @@ export function SettingsPage() {
               showToast(val ? 'Источник LRCLIB включен' : 'Источник LRCLIB отключен', 'info');
             }}
           />
+
+          <ToggleRow
+            label="Приоритет пословной синхронизации (Word-Sync)"
+            description="Автоматически предпочитать слоговой/пословный тайминг (Better Lyrics или NetEase) обычному построчному LRC"
+            checked={preferWordSync}
+            badge={preferWordSync ? 'Активно' : 'Выкл'}
+            onChange={(val) => {
+              setPreferWordSync(val);
+              showToast(val ? 'Приоритет слогового караоке включен' : 'Приоритет слогового караоке выключен', 'info');
+            }}
+          />
         </div>
 
         {/* Priority Selection */}
-        {enableZvuk && enableLrclib && (
-          <div>
-            <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '8px' }}>
-              Приоритет поиска:
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+        <div>
+          <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '8px' }}>
+            Основной источник поиска:
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            {enableBetterLyrics && (
               <PriorityOption
-                label="Сначала Звук"
-                description="Использовать каталог Звук; при отсутствии караоке автоматически искать в базе LRCLIB"
+                label="Better Lyrics (LRC.RED)"
+                description="Искать пословные тексты Better Lyrics первыми"
+                isSelected={lyricsPriority === 'betterlyrics'}
+                onSelect={() => {
+                  setLyricsPriority('betterlyrics');
+                  showToast('Основной источник: Better Lyrics', 'info');
+                }}
+              />
+            )}
+            {enableNetease && (
+              <PriorityOption
+                label="NetEase Cloud Music"
+                description="Искать пословные тексты NetEase первыми"
+                isSelected={lyricsPriority === 'netease'}
+                onSelect={() => {
+                  setLyricsPriority('netease');
+                  showToast('Основной источник: NetEase Cloud Music', 'info');
+                }}
+              />
+            )}
+            {enableZvuk && (
+              <PriorityOption
+                label="Каталог Звук"
+                description="Использовать официальный каталог Звук в первую очередь"
                 isSelected={lyricsPriority === 'zvuk'}
                 onSelect={() => {
                   setLyricsPriority('zvuk');
-                  showToast('Установлен приоритет: Звук → LRCLIB', 'info');
+                  showToast('Основной источник: Звук', 'info');
                 }}
               />
+            )}
+            {enableLrclib && (
               <PriorityOption
-                label="Сначала LRCLIB"
-                description="Использовать караоке из базы LRCLIB; при отсутствии обращаться к каталогу Звук"
+                label="База LRCLIB"
+                description="Искать в открытой базе LRCLIB в первую очередь"
                 isSelected={lyricsPriority === 'lrclib'}
                 onSelect={() => {
                   setLyricsPriority('lrclib');
-                  showToast('Установлен приоритет: LRCLIB → Звук', 'info');
+                  showToast('Основной источник: LRCLIB', 'info');
+                }}
+              />
+            )}
+          </div>
+        </div>
+      </section>
+
+      {/* Discord Rich Presence Section */}
+      <section
+        style={{
+          padding: '20px',
+          background: 'var(--bg-secondary)',
+          borderRadius: 'var(--radius-lg)',
+          border: '1px solid var(--border-subtle)',
+          marginBottom: '16px',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '4px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <h4 style={{ margin: 0 }}>Discord Rich Presence</h4>
+          </div>
+        </div>
+        <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '16px' }}>
+          Транслирует играющий трек, исполнителя, альбом, обложку и интерактивный прогресс-бар в ваш статус Discord («Listening to...»).
+        </p>
+
+        <ToggleRow
+          label="Транслировать статус в Discord"
+          description="Показывать текущее воспроизведение в вашем профиле Discord в реальном времени"
+          checked={discordEnabled}
+          badge={discordEnabled ? (discordConnected ? 'Подключено' : 'Ожидание Discord') : 'Выключено'}
+          onChange={async (val) => {
+            await setDiscordEnabled(val);
+            showToast(val ? 'Discord Rich Presence включен' : 'Discord Rich Presence отключен', 'info');
+          }}
+        />
+
+        {discordEnabled && (
+          <div style={{ marginTop: '16px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
+            {/* Status indicator bar */}
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                padding: '10px 14px',
+                borderRadius: 'var(--radius-md)',
+                background: 'var(--bg-card)',
+                border: '1px solid var(--border-subtle)',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <div
+                  style={{
+                    width: '10px',
+                    height: '10px',
+                    borderRadius: '50%',
+                    background: discordConnected ? '#23A55A' : '#F0B232',
+                    boxShadow: discordConnected
+                      ? '0 0 8px rgba(35, 165, 90, 0.6)'
+                      : '0 0 8px rgba(240, 178, 50, 0.4)',
+                  }}
+                />
+                <span style={{ fontSize: '13px', fontWeight: 500, color: 'var(--text-primary)' }}>
+                  {discordConnected
+                    ? 'Клиент Discord обнаружен и подключен'
+                    : 'Ожидание запуска Discord (запустите Discord на компьютере)'}
+                </span>
+              </div>
+              <button
+                className="btn btn--secondary"
+                style={{ padding: '4px 10px', fontSize: '12px' }}
+                onClick={() => {
+                  checkDiscordStatus();
+                  showToast('Проверка соединения с Discord...', 'info');
+                }}
+              >
+                Обновить
+              </button>
+            </div>
+
+            {/* Client ID Configuration */}
+            <div
+              style={{
+                padding: '14px',
+                borderRadius: 'var(--radius-md)',
+                background: 'var(--bg-card)',
+                border: '1px solid var(--border-subtle)',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
+                <label style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>
+                  Discord Application ID (Client ID)
+                </label>
+                {inputClientId.trim() !== '' && (
+                  <button
+                    className="btn btn--secondary"
+                    style={{ fontSize: '11px', padding: '2px 8px' }}
+                    onClick={async () => {
+                      await resetDiscordClientId();
+                      setInputClientId('');
+                      showToast('Сброшено на Client ID по умолчанию', 'info');
+                    }}
+                  >
+                    Сбросить по умолчанию
+                  </button>
+                )}
+              </div>
+              <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '10px' }}>
+                По умолчанию используется ключ разработчика. Вы можете указать собственный Application ID, если хотите настроить свое имя или иконку.
+              </p>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <input
+                  type="text"
+                  value={inputClientId}
+                  onChange={(e) => setInputClientId(e.target.value)}
+                  placeholder="По умолчанию (ключ разработчика)"
+                  style={{
+                    flex: 1,
+                    padding: '8px 12px',
+                    borderRadius: 'var(--radius-sm)',
+                    border: '1px solid var(--border)',
+                    background: 'var(--bg-surface)',
+                    color: 'var(--text-primary)',
+                    fontSize: '13px',
+                    outline: 'none',
+                    fontFamily: 'monospace',
+                  }}
+                />
+                <button
+                  className="btn btn--secondary"
+                  disabled={inputClientId === discordClientId}
+                  onClick={async () => {
+                    await setDiscordClientId(inputClientId);
+                    showToast('Discord Client ID сохранен', 'info');
+                  }}
+                >
+                  Применить
+                </button>
+              </div>
+              <div style={{ marginTop: '10px' }}>
+                <a
+                  href="https://discord.com/developers/applications"
+                  onClick={async (e) => {
+                    e.preventDefault();
+                    try {
+                      await openUrl('https://discord.com/developers/applications');
+                    } catch {
+                      window.open('https://discord.com/developers/applications', '_blank');
+                    }
+                  }}
+                  style={{
+                    fontSize: '12px',
+                    color: 'var(--accent)',
+                    textDecoration: 'none',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                    cursor: 'pointer',
+                  }}
+                >
+                  <span>Создать свое приложение в Discord Developer Portal ↗</span>
+                </a>
+              </div>
+            </div>
+
+            {/* Additional Toggles */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <ToggleRow
+                label="Кнопка «Слушать в Звуке»"
+                description="Добавляет в активность кнопку с прямой ссылкой на воспроизводимый трек на Звук"
+                checked={discordShowButtons}
+                badge={discordShowButtons ? 'Вкл' : 'Выкл'}
+                onChange={async (val) => {
+                  await setDiscordShowButtons(val);
+                  showToast(val ? 'Кнопка трека включена' : 'Кнопка трека отключена', 'info');
+                }}
+              />
+
+              <ToggleRow
+                label="Отображать активность при паузе"
+                description="При паузе оставляет обложку и название трека с отметкой «На паузе». При отключении статус сразу скрывается при паузе"
+                checked={discordShowPause}
+                badge={discordShowPause ? 'Вкл' : 'Скрывать'}
+                onChange={async (val) => {
+                  await setDiscordShowPause(val);
+                  showToast(val ? 'Статус при паузе активен' : 'Статус скрывается при паузе', 'info');
                 }}
               />
             </div>
@@ -444,6 +724,8 @@ export function SettingsPage() {
             { key: 'M', label: 'Выключить / включить звук' },
             { key: 'S', label: 'Случайный порядок' },
             { key: 'R', label: 'Режим повтора' },
+            { key: 'F', label: 'Полноэкранный плеер' },
+            { key: 'Esc', label: 'Выход из полноэкранного плеера' },
           ].map((item) => (
             <div
               key={item.key}

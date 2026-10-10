@@ -1,5 +1,5 @@
 use crate::error::AppError;
-use crate::models::{Album, ArtistDetail, StreamInfo, Track};
+use crate::models::{Album, ArtistDetail, ArtistReleasesPage, StreamInfo, Track};
 use crate::state::AppState;
 use tauri::State;
 
@@ -10,6 +10,15 @@ pub async fn get_track(
     state: State<'_, AppState>,
 ) -> Result<Track, AppError> {
     state.api_client.get_track(id).await
+}
+
+/// Batch fetch multiple tracks by IDs.
+#[tauri::command]
+pub async fn get_tracks_by_ids(
+    ids: Vec<String>,
+    state: State<'_, AppState>,
+) -> Result<Vec<Track>, AppError> {
+    state.api_client.get_tracks_by_ids(&ids).await
 }
 
 /// Get album metadata and tracks by ID.
@@ -28,6 +37,17 @@ pub async fn get_artist(
     state: State<'_, AppState>,
 ) -> Result<ArtistDetail, AppError> {
     state.api_client.get_artist(id).await
+}
+
+/// Get paginated artist releases with cursor.
+#[tauri::command]
+pub async fn get_artist_releases(
+    id: i64,
+    cursor: Option<String>,
+    limit: Option<u32>,
+    state: State<'_, AppState>,
+) -> Result<ArtistReleasesPage, AppError> {
+    state.api_client.get_artist_releases(id, cursor, limit).await
 }
 
 /// Resolve the stream URL for a track.

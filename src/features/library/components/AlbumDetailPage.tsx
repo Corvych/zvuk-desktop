@@ -6,6 +6,9 @@ import { useFavouritesStore } from '../../favourites/favouritesStore';
 import { ArtistLinks } from '../../../components/ArtistLinks';
 import { LikeButton } from '../../../components/LikeButton';
 import { HeartIcon } from '../../../components/HeartIcon';
+import { ShareIcon } from '../../../components/ShareIcon';
+import { showToast } from '../../../components/Toast';
+import { usePlaylistModalStore } from '../../playlists/playlistModalStore';
 
 
 function formatDuration(totalSeconds: number): string {
@@ -243,6 +246,17 @@ export function AlbumDetailPage() {
             >
               <HeartIcon filled={albumLiked} size={22} />
             </button>
+
+            <button
+              className="detail-action-btn"
+              onClick={() => {
+                navigator.clipboard.writeText(`https://zvuk.com/release/${album.id}`);
+                showToast('Ссылка на альбом скопирована', 'success');
+              }}
+              title="Поделиться альбомом"
+            >
+              <ShareIcon size={18} />
+            </button>
           </div>
         </div>
       </div>
@@ -325,6 +339,32 @@ export function AlbumDetailPage() {
                     </div>
 
                     <div className="detail-table__col-actions">
+                      <button
+                        type="button"
+                        className="detail-row-action-btn"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          usePlaylistModalStore.getState().openAddToPlaylist(track);
+                        }}
+                        title="Добавить в плейлист"
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <line x1="12" y1="5" x2="12" y2="19" />
+                          <line x1="5" y1="12" x2="19" y2="12" />
+                        </svg>
+                      </button>
+                      <button
+                        type="button"
+                        className="detail-row-action-btn"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          navigator.clipboard.writeText(`https://zvuk.com/track/${track.id}`);
+                          showToast('Ссылка на трек скопирована', 'success');
+                        }}
+                        title="Поделиться треком"
+                      >
+                        <ShareIcon size={14} />
+                      </button>
                       <LikeButton
                         isLiked={trackLiked}
                         onToggle={() => toggleLikeTrack(track.id)}

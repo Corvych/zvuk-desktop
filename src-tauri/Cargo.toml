@@ -1,6 +1,6 @@
 [package]
 name = "zvuk-desktop"
-version = "0.0.1"
+version = "0.0.4"
 description = "Desktop player for Zvuk streaming service"
 authors = ["Corvych"]
 edition = "2021"
@@ -23,3 +23,5 @@ keyring = { version = "3", features = ["windows-native"] }
 thiserror = "2"
 log = "0.4"
 env_logger = "0.11"
+tauri-plugin-deep-link = "2"
+tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }

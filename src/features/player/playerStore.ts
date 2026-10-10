@@ -3,11 +3,23 @@ import { persist } from 'zustand/middleware';
 import {
   getPersonalWave,
   getArtistRadio,
+  getLikedTracks,
+  getTracksByIds,
+  getPlaylist,
   type Track,
   type StreamInfo,
   type PersonalWaveContentInput,
   type PersonalWaveOptions,
 } from '../../api';
+
+export interface QueueContext {
+  type: 'favourites' | 'playlist' | 'album' | 'artist' | 'custom';
+  id?: string | number;
+  offset: number;
+  hasNext: boolean;
+  total?: number;
+  allTrackIds?: (string | number)[];
+}
 
 export type RepeatMode = 'off' | 'all' | 'one';
 
@@ -75,9 +87,16 @@ interface PlayerState {
   isFullscreenPlayerOpen: boolean;
   fullscreenTab: 'track' | 'lyrics' | 'queue';
 
+  // Queue Context for dynamic pagination (favourites, playlists, etc.)
+  queueContext: QueueContext | null;
+  isFetchingMoreQueue: boolean;
+
   // Actions
   setTrack: (track: Track, streamInfo?: StreamInfo) => void;
-  setQueue: (tracks: Track[], startIndex?: number) => void;
+  setQueue: (tracks: Track[], startIndex?: number, context?: QueueContext | null) => void;
+  appendToQueue: (tracks: Track[]) => void;
+  loadMoreQueueTracks: () => Promise<boolean>;
+  playQueueTrack: (index: number) => void;
   startWave: (initialTracks: Track[], options?: PersonalWaveOptions | null) => void;
   startArtistWave: (artist: WaveArtist, initialTracks: Track[]) => void;
   setWaveOptions: (options: PersonalWaveOptions) => void;
@@ -108,6 +127,9 @@ interface PlayerState {
   setFullscreenTab: (tab: 'track' | 'lyrics' | 'queue') => void;
 }
 
+let activeQueueFetchPromise: Promise<boolean> | null = null;
+let activeFetchContextId = 0;
+
 export const usePlayerStore = create<PlayerState>()(
   persist(
     (set, get) => ({
@@ -133,6 +155,8 @@ export const usePlayerStore = create<PlayerState>()(
       waveMood: null,
       isFullscreenPlayerOpen: false,
       fullscreenTab: 'track',
+      queueContext: null,
+      isFetchingMoreQueue: false,
 
       setTrack: (track, streamInfo) =>
         set({
@@ -147,9 +171,12 @@ export const usePlayerStore = create<PlayerState>()(
           waveType: 'personal',
           waveArtist: null,
           artistRadioPlayedCount: 0,
+          queueContext: null,
         }),
 
-      setQueue: (tracks, startIndex = 0) =>
+      setQueue: (tracks, startIndex = 0, context = null) => {
+        activeFetchContextId++;
+        activeQueueFetchPromise = null;
         set({
           queue: tracks,
           queueIndex: startIndex,
@@ -161,7 +188,175 @@ export const usePlayerStore = create<PlayerState>()(
           waveType: 'personal',
           waveArtist: null,
           artistRadioPlayedCount: 0,
+          queueContext: context ?? null,
+          isFetchingMoreQueue: false,
+        });
+
+        // If starting near the end of loaded tracks, proactively prefetch next page
+        const remaining = tracks.length - (startIndex + 1);
+        if (context?.hasNext && remaining <= 5) {
+          get().loadMoreQueueTracks().catch((err) =>
+            console.warn('[playerStore] Initial prefetch error:', err)
+          );
+        }
+      },
+
+      appendToQueue: (tracks) =>
+        set((state) => {
+          if (!tracks || tracks.length === 0) return state;
+          const existingIds = new Set(state.queue.map((t) => String(t.id)));
+          const newTracks = tracks.filter((t) => !existingIds.has(String(t.id)));
+          if (newTracks.length === 0) return state;
+          const nextQueue = [...state.queue, ...newTracks];
+          return {
+            queue: nextQueue,
+            queueContext: state.queueContext
+              ? {
+                  ...state.queueContext,
+                  offset: Math.max(state.queueContext.offset, nextQueue.length),
+                  hasNext: state.queueContext.total
+                    ? nextQueue.length < state.queueContext.total
+                    : state.queueContext.allTrackIds
+                    ? nextQueue.length < state.queueContext.allTrackIds.length
+                    : state.queueContext.hasNext,
+                }
+              : null,
+          };
         }),
+
+      playQueueTrack: (index: number) => {
+        const { queue } = get();
+        if (index >= 0 && index < queue.length) {
+          set({
+            queueIndex: index,
+            currentTrack: queue[index],
+            progress: 0,
+            seekTarget: null,
+            isPlaying: true,
+          });
+          const remaining = queue.length - (index + 1);
+          if (remaining <= 5 && get().queueContext?.hasNext) {
+            get().loadMoreQueueTracks().catch(() => {});
+          }
+        }
+      },
+
+      loadMoreQueueTracks: async () => {
+        if (activeQueueFetchPromise) {
+          return activeQueueFetchPromise;
+        }
+
+        const { queueContext } = get();
+        if (!queueContext || !queueContext.hasNext) return false;
+
+        const thisFetchContextId = activeFetchContextId;
+        set({ isFetchingMoreQueue: true });
+
+        activeQueueFetchPromise = (async () => {
+          try {
+            if (queueContext.type === 'favourites') {
+              const currentQueue = get().queue;
+              const currentOffset = Math.max(queueContext.offset, currentQueue.length);
+              const res = await getLikedTracks(currentOffset, 50);
+              if (activeFetchContextId !== thisFetchContextId) return false;
+
+              if (res?.items && res.items.length > 0) {
+                const freshQueue = get().queue;
+                const existingIds = new Set(freshQueue.map((t) => String(t.id)));
+                const newTracks = res.items.filter((t) => !existingIds.has(String(t.id)));
+                const nextQueue = [...freshQueue, ...newTracks];
+                const nextOffset = currentOffset + res.items.length;
+                const hasNext = res.has_next;
+                set((state) => ({
+                  queue: nextQueue,
+                  queueContext: state.queueContext
+                    ? {
+                        ...state.queueContext,
+                        offset: nextOffset,
+                        hasNext,
+                        total: res.total,
+                      }
+                    : null,
+                }));
+                return newTracks.length > 0;
+              } else {
+                set((state) => ({
+                  queueContext: state.queueContext ? { ...state.queueContext, hasNext: false } : null,
+                }));
+                return false;
+              }
+            } else if (queueContext.type === 'playlist') {
+              let allTrackIds = queueContext.allTrackIds;
+              if (!allTrackIds || allTrackIds.length === 0) {
+                if (queueContext.id) {
+                  try {
+                    const pl = await getPlaylist(Number(queueContext.id));
+                    if (pl?.track_ids && pl.track_ids.length > 0) {
+                      allTrackIds = pl.track_ids.map(String);
+                      if (activeFetchContextId === thisFetchContextId) {
+                        set((state) => ({
+                          queueContext: state.queueContext
+                            ? { ...state.queueContext, allTrackIds }
+                            : null,
+                        }));
+                      }
+                    }
+                  } catch (e) {
+                    console.error('[playerStore] Failed to resolve playlist track_ids:', e);
+                  }
+                }
+              }
+
+              if (allTrackIds && allTrackIds.length > 0) {
+                const currentQueue = get().queue;
+                const currentOffset = Math.max(queueContext.offset, currentQueue.length);
+                const nextSlice = allTrackIds.slice(currentOffset, currentOffset + 50);
+                if (nextSlice.length > 0) {
+                  const res = await getTracksByIds(nextSlice);
+                  if (activeFetchContextId !== thisFetchContextId) return false;
+
+                  if (res && res.length > 0) {
+                    const freshQueue = get().queue;
+                    const existingIds = new Set(freshQueue.map((t) => String(t.id)));
+                    const newTracks = res.filter((t) => !existingIds.has(String(t.id)));
+                    const nextQueue = [...freshQueue, ...newTracks];
+                    const nextOffset = currentOffset + nextSlice.length;
+                    const hasNext = nextOffset < allTrackIds.length;
+                    set((state) => ({
+                      queue: nextQueue,
+                      queueContext: state.queueContext
+                        ? {
+                            ...state.queueContext,
+                            offset: nextOffset,
+                            hasNext,
+                            allTrackIds,
+                          }
+                        : null,
+                    }));
+                    return newTracks.length > 0;
+                  }
+                } else {
+                  set((state) => ({
+                    queueContext: state.queueContext ? { ...state.queueContext, hasNext: false } : null,
+                  }));
+                  return false;
+                }
+              }
+            }
+            return false;
+          } catch (err) {
+            console.error('[playerStore] Failed to load more queue tracks:', err);
+            return false;
+          } finally {
+            if (activeFetchContextId === thisFetchContextId) {
+              set({ isFetchingMoreQueue: false });
+            }
+            activeQueueFetchPromise = null;
+          }
+        })();
+
+        return activeQueueFetchPromise;
+      },
 
       startWave: (initialTracks, options) =>
         set({
@@ -294,7 +489,6 @@ export const usePlayerStore = create<PlayerState>()(
                 }
               }
             })
-            .catch((err) => console.warn('[PersonalWave] Failed to fetch next wave tracks:', err));
         }
 
         let nextIndex: number;
@@ -355,6 +549,24 @@ export const usePlayerStore = create<PlayerState>()(
                   console.error('[PersonalWave] End of queue fetch failed:', e);
                 }
               }
+            } else if (get().queueContext?.hasNext) {
+              // End of queue reached in paginated source: await next page!
+              await get().loadMoreQueueTracks();
+              const updatedQueue = get().queue;
+              if (nextIndex < updatedQueue.length) {
+                set({
+                  queueIndex: nextIndex,
+                  currentTrack: updatedQueue[nextIndex],
+                  progress: 0,
+                  seekTarget: null,
+                  isPlaying: true,
+                });
+                const remainingAfter = updatedQueue.length - (nextIndex + 1);
+                if (remainingAfter <= 5 && get().queueContext?.hasNext) {
+                  get().loadMoreQueueTracks().catch(() => {});
+                }
+                return;
+              }
             }
 
             if (repeat === 'all') {
@@ -366,13 +578,22 @@ export const usePlayerStore = create<PlayerState>()(
           }
         }
 
+        const currentQueue = get().queue;
         set({
           queueIndex: nextIndex,
-          currentTrack: queue[nextIndex],
+          currentTrack: currentQueue[nextIndex],
           progress: 0,
           seekTarget: null,
           isPlaying: true,
         });
+
+        // Proactively prefetch more tracks when remaining tracks <= 5
+        const remainingInQueue = currentQueue.length - (nextIndex + 1);
+        if (remainingInQueue <= 5 && get().queueContext?.hasNext) {
+          get().loadMoreQueueTracks().catch((err) =>
+            console.warn('[playerStore] Proactive queue fetch error:', err)
+          );
+        }
       },
 
       previousTrack: () => {
@@ -470,6 +691,9 @@ export const usePlayerStore = create<PlayerState>()(
         artistRadioPlayedCount: state.artistRadioPlayedCount,
         waveOptions: state.waveOptions,
         waveMood: state.waveMood,
+
+        // Queue context
+        queueContext: state.queueContext,
       }),
       onRehydrateStorage: () => (state) => {
         if (state) {

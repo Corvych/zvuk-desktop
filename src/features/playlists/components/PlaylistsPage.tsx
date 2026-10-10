@@ -1,13 +1,21 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { getUserPlaylists, getPlaylist, createPlaylist, type Playlist } from '../../../api';
+import { getUserPlaylists, getPlaylist, createPlaylist, type Playlist, type Track } from '../../../api';
 import { usePlayerStore } from '../../player/playerStore';
+import { EditPlaylistModal } from './EditPlaylistModal';
+import { PlaylistCover } from './PlaylistCover';
+import { useAuthStore } from '../../auth/authStore';
+import { usePlaylistModalStore } from '../playlistModalStore';
 
 export function PlaylistsPage() {
   const navigate = useNavigate();
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
   const [loading, setLoading] = useState(true);
+  const [editingPlaylist, setEditingPlaylist] = useState<Playlist | null>(null);
+  const [editingTracks, setEditingTracks] = useState<Track[]>([]);
   const { setQueue } = usePlayerStore();
+  const currentUser = useAuthStore((s) => s.user);
+  const checkIsOwner = usePlaylistModalStore((s) => s.checkIsOwner);
 
   useEffect(() => {
     let isSubscribed = true;
@@ -36,13 +44,19 @@ export function PlaylistsPage() {
   const handlePlayDirect = async (e: React.MouseEvent, playlist: Playlist) => {
     e.stopPropagation();
     try {
-      if (playlist.tracks && playlist.tracks.length > 0) {
-        setQueue(playlist.tracks, 0);
-      } else {
-        const fullPlaylist = await getPlaylist(playlist.id);
-        if (fullPlaylist?.tracks && fullPlaylist.tracks.length > 0) {
-          setQueue(fullPlaylist.tracks, 0);
-        }
+      const fullPlaylist = (!playlist.tracks || playlist.tracks.length === 0 || !playlist.track_ids)
+        ? await getPlaylist(playlist.id)
+        : playlist;
+
+      if (fullPlaylist?.tracks && fullPlaylist.tracks.length > 0) {
+        setQueue(fullPlaylist.tracks, 0, {
+          type: 'playlist',
+          id: String(fullPlaylist.id),
+          offset: fullPlaylist.tracks.length,
+          total: fullPlaylist.track_ids?.length ?? fullPlaylist.track_count ?? fullPlaylist.tracks.length,
+          hasNext: (fullPlaylist.track_ids?.length ?? 0) > fullPlaylist.tracks.length,
+          allTrackIds: fullPlaylist.track_ids ? fullPlaylist.track_ids.map(String) : undefined,
+        });
       }
     } catch (err) {
       console.error('[Playlists] Failed to play playlist:', err);
@@ -54,6 +68,7 @@ export function PlaylistsPage() {
     if (title && title.trim()) {
       try {
         const newPl = await createPlaylist(title.trim());
+        usePlaylistModalStore.getState().addUserPlaylistId(newPl.id);
         setPlaylists((prev) => [newPl, ...prev]);
       } catch (err) {
         console.error('[Playlists] Failed to create playlist:', err);
@@ -129,13 +144,7 @@ export function PlaylistsPage() {
           playlists.map((playlist) => (
             <div key={playlist.id} className="card" onClick={() => navigate(`/playlist/${playlist.id}`)}>
               <div className="card__cover">
-                {playlist.cover_url ? (
-                  <img src={playlist.cover_url} alt={playlist.title} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                ) : (
-                  <div style={{ width: '100%', height: '100%', background: 'var(--bg-card-hover)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    🎶
-                  </div>
-                )}
+                <PlaylistCover playlist={playlist} />
                 <button
                   className="card__play-btn"
                   title="Воспроизвести"
@@ -145,13 +154,70 @@ export function PlaylistsPage() {
                     <path d="M8 5v14l11-7z" />
                   </svg>
                 </button>
+                {checkIsOwner(playlist, currentUser?.id) && (
+                  <button
+                    className="card__play-btn"
+                    title="Редактировать плейлист"
+                    style={{
+                      right: '54px',
+                      background: 'rgba(255, 255, 255, 0.16)',
+                      color: '#ffffff',
+                    }}
+                    onClick={async (e) => {
+                      e.stopPropagation();
+                      try {
+                        const full = (!playlist.tracks || playlist.tracks.length === 0 || typeof playlist.is_public !== 'boolean')
+                          ? await getPlaylist(playlist.id)
+                          : playlist;
+                        setEditingPlaylist(full);
+                        setEditingTracks(full.tracks || []);
+                      } catch (err) {
+                        console.error('[Playlists] Failed to load full playlist for editing:', err);
+                      }
+                    }}
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                      <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                    </svg>
+                  </button>
+                )}
               </div>
               <div className="card__title">{playlist.title}</div>
-              <div className="card__subtitle">{playlist.track_count ?? 0} треков</div>
+              <div className="card__subtitle">
+                {playlist.is_public === false ? '🔒 ' : ''}
+                {playlist.track_count ?? 0} треков
+              </div>
             </div>
           ))
         )}
       </div>
+
+      {editingPlaylist && (
+        <EditPlaylistModal
+          isOpen={Boolean(editingPlaylist)}
+          onClose={() => setEditingPlaylist(null)}
+          playlist={editingPlaylist}
+          initialTracks={editingTracks}
+          onSaveSuccess={(updatedName, updatedTracks, isPublic) => {
+            setPlaylists((prev) =>
+              prev.map((p) =>
+                p.id === editingPlaylist.id
+                  ? {
+                      ...p,
+                      title: updatedName,
+                      tracks: updatedTracks,
+                      track_count: updatedTracks.length,
+                      cover_urls: updatedTracks.slice(0, 4).map((t) => t.cover_url).filter((u): u is string => Boolean(u)),
+                      cover_url: updatedTracks[0]?.cover_url ?? p.cover_url,
+                      is_public: isPublic,
+                    }
+                  : p
+              )
+            );
+          }}
+        />
+      )}
     </div>
   );
 }

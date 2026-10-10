@@ -24,6 +24,8 @@
     "core:window:allow-destroy",
     "core:window:allow-set-focus",
     "core:window:allow-start-dragging",
-    "opener:default"
+    "core:event:default",
+    "opener:default",
+    "deep-link:default"
   ]
 }
