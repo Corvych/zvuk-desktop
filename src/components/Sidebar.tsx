@@ -1,6 +1,8 @@
 import { NavLink } from 'react-router-dom';
 import { useAuthStore } from '../features/auth/authStore';
 import { HeartIcon } from './HeartIcon';
+import { useUpdateStore } from '../features/updater/updateStore';
+import { UpdateSidebarButton } from '../features/updater/components/UpdateSidebarButton';
 
 interface NavItem {
   to: string;
@@ -53,6 +55,8 @@ const navItems: NavItem[] = [
 ];
 
 export function Sidebar() {
+  const hasUpdate = useUpdateStore((s) => s.hasUpdate);
+
   return (
     <nav className="sidebar sidebar-area" aria-label="Боковое меню">
       <div className="sidebar__nav">
@@ -74,6 +78,7 @@ export function Sidebar() {
       </div>
 
       <div className="sidebar__footer">
+        {hasUpdate && <UpdateSidebarButton />}
         <UserProfileIcon />
       </div>
     </nav>

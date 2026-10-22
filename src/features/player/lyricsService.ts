@@ -397,16 +397,10 @@ export async function probeAllSources(
     enableBetterLyrics,
     enableNetease,
     enableLrclib,
+    sourceOrder = ['betterlyrics', 'netease', 'zvuk', 'lrclib'],
   } = useLyricsSettingsStore.getState();
 
-  const allSources: ('betterlyrics' | 'netease' | 'zvuk' | 'lrclib')[] = [
-    'betterlyrics',
-    'netease',
-    'zvuk',
-    'lrclib',
-  ];
-
-  const sources = allSources.filter((s) => {
+  const sources = sourceOrder.filter((s) => {
     if (s === 'zvuk') return enableZvuk;
     if (s === 'betterlyrics') return enableBetterLyrics;
     if (s === 'netease') return enableNetease;
@@ -487,7 +481,7 @@ export async function fetchUnifiedLyrics(
     enableNetease,
     enableLrclib,
     preferWordSync,
-    priority,
+    sourceOrder = ['betterlyrics', 'netease', 'zvuk', 'lrclib'],
   } = useLyricsSettingsStore.getState();
 
   if (!enableZvuk && !enableBetterLyrics && !enableNetease && !enableLrclib) {
@@ -506,8 +500,9 @@ export async function fetchUnifiedLyrics(
 
   // 2. If preferWordSync is enabled, proactively query Enhanced word-level sync providers first!
   if (preferWordSync) {
-    const wordSyncOrder: ('betterlyrics' | 'netease')[] =
-      priority === 'netease' ? ['netease', 'betterlyrics'] : ['betterlyrics', 'netease'];
+    const wordSyncOrder = sourceOrder.filter(
+      (s): s is 'betterlyrics' | 'netease' => s === 'betterlyrics' || s === 'netease'
+    );
 
     for (const wsSource of wordSyncOrder) {
       if (wsSource === 'betterlyrics' && !enableBetterLyrics) continue;
@@ -522,18 +517,7 @@ export async function fetchUnifiedLyrics(
     }
   }
 
-  // 3. Chain through all enabled sources according to configured priority
-  const defaultSources: ('betterlyrics' | 'zvuk' | 'netease' | 'lrclib')[] = [
-    'betterlyrics',
-    'zvuk',
-    'netease',
-    'lrclib',
-  ];
-  const sourceOrder: ('betterlyrics' | 'zvuk' | 'netease' | 'lrclib')[] = [
-    priority,
-    ...defaultSources.filter((s) => s !== priority),
-  ];
-
+  // 3. Chain through all enabled sources according to configured priority order
   let firstPlainFallback: ResolvedLyrics | null = null;
 
   for (const src of sourceOrder) {

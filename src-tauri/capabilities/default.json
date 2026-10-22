@@ -26,6 +26,8 @@
     "core:window:allow-start-dragging",
     "core:event:default",
     "opener:default",
-    "deep-link:default"
+    "deep-link:default",
+    "notification:default",
+    "window-state:default"
   ]
 }

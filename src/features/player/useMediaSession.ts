@@ -1,20 +1,12 @@
 import { useEffect } from 'react';
 import { usePlayerStore } from './playerStore';
+import { updateTaskbarPlayback, isTauri } from '../../api';
+import { listen } from '@tauri-apps/api/event';
 
 /**
- * Synchronises the current track with the browser's Media Session API.
- *
- * WebView2 (used by Tauri on Windows) forwards Media Session metadata and
- * action handlers directly to the Windows System Media Transport Controls
- * (SMTC), which powers the overlay shown in the volume OSD, the taskbar
- * thumbnail, and the hardware media-key handlers.
- *
- * Responsibilities:
- *  - Update `navigator.mediaSession.metadata` whenever the track changes.
- *  - Keep `navigator.mediaSession.playbackState` in sync with isPlaying.
- *  - Register action handlers so SMTC buttons call the correct store actions.
- *  - Update `setPositionState` on progress/duration changes so the seek bar
- *    in the SMTC overlay is accurate.
+ * Synchronises the current track with:
+ *  1. The browser's Media Session API (SMTC / volume overlay)
+ *  2. Windows Taskbar Thumbnail Toolbar (mini-player under taskbar preview)
  */
 export function useMediaSession() {
   const {
@@ -26,7 +18,59 @@ export function useMediaSession() {
     nextTrack,
     previousTrack,
     seekTo,
+    queueIndex,
+    queue,
+    isWaveMode,
+    queueContext,
   } = usePlayerStore();
+
+  const canPrev = queueIndex > 0;
+  const canNext = isWaveMode || (queueContext?.hasNext ?? false) || queueIndex < queue.length - 1;
+
+  // ── Windows Taskbar Thumbnail Toolbar sync ────────────────────────────────
+  useEffect(() => {
+    updateTaskbarPlayback(isPlaying, canPrev, canNext);
+  }, [isPlaying, canPrev, canNext]);
+
+  // ── Listen for Windows Taskbar Thumbnail Toolbar clicks ───────────────────
+  useEffect(() => {
+    if (!isTauri()) return;
+
+    let cleanups: (() => void)[] = [];
+    let isCancelled = false;
+
+    const setupListeners = async () => {
+      try {
+        const u1 = await listen('taskbar-prev', () => {
+          usePlayerStore.getState().previousTrack();
+        });
+        const u2 = await listen('taskbar-play-pause', () => {
+          usePlayerStore.getState().togglePlay();
+        });
+        const u3 = await listen('taskbar-next', () => {
+          usePlayerStore.getState().nextTrack();
+        });
+
+        if (isCancelled) {
+          u1();
+          u2();
+          u3();
+        } else {
+          cleanups.push(u1, u2, u3);
+        }
+      } catch (err) {
+        console.warn('[useMediaSession] Failed to setup taskbar listeners:', err);
+      }
+    };
+
+    setupListeners();
+
+    return () => {
+      isCancelled = true;
+      cleanups.forEach((fn) => fn());
+    };
+  }, []);
+
 
   // ── Metadata ──────────────────────────────────────────────────────────────
   useEffect(() => {

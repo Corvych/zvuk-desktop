@@ -23,3 +23,12 @@ pub async fn window_close(window: tauri::Window) {
 pub async fn window_start_dragging(window: tauri::Window) {
     let _ = window.start_dragging();
 }
+
+#[tauri::command]
+pub async fn update_taskbar_playback(is_playing: bool, can_prev: bool, can_next: bool) {
+    #[cfg(windows)]
+    crate::taskbar::update_taskbar_playback(is_playing, can_prev, can_next);
+    #[cfg(not(windows))]
+    let _ = (is_playing, can_prev, can_next);
+}
+

@@ -18,6 +18,8 @@ import { AddToPlaylistModal } from './features/playlists/components/AddToPlaylis
 import { AlbumDetailPage } from './features/library/components/AlbumDetailPage';
 import { ArtistDetailPage } from './features/artists/components/ArtistDetailPage';
 import { SettingsPage } from './features/settings/components/SettingsPage';
+import { UpdateModal } from './features/updater/components/UpdateModal';
+import { useUpdateStore } from './features/updater/updateStore';
 
 import { useAuthStore } from './features/auth/authStore';
 import { usePlayerStore } from './features/player/playerStore';
@@ -155,6 +157,7 @@ function AppShell({ isRevealed = true }: { isRevealed?: boolean }) {
         </Routes>
       </main>
       <ToastContainer />
+      <UpdateModal />
       <AddToPlaylistModal />
       <PlayerBar />
       <FullscreenPlayer />
@@ -171,6 +174,14 @@ export default function App() {
   useEffect(() => {
     checkAuth();
   }, [checkAuth]);
+
+  useEffect(() => {
+    useUpdateStore.getState().init();
+    const timer = setTimeout(() => {
+      useUpdateStore.getState().checkForUpdates();
+    }, 3000);
+    return () => clearTimeout(timer);
+  }, []);
 
   useEffect(() => {
     const handleReplay = () => {

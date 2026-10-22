@@ -68,10 +68,11 @@ export function PlaylistDetailPage() {
           const initialTracks = data.tracks || [];
           setPlaylistTracks(initialTracks);
           const allIds = data.track_ids || [];
-          const hasMore = allIds.length > initialTracks.length;
+          const initialOffset = Math.min(50, allIds.length);
+          const hasMore = allIds.length > initialOffset;
           playlistStateRef.current = {
             loading: false,
-            offset: initialTracks.length,
+            offset: initialOffset,
             hasNext: hasMore,
           };
         }
@@ -167,8 +168,10 @@ export function PlaylistDetailPage() {
         const newTracks = queue.filter((t) => !existingIds.has(String(t.id)));
         if (newTracks.length === 0) return prev;
         const next = [...prev, ...newTracks];
-        playlistStateRef.current.offset = next.length;
-        playlistStateRef.current.hasNext = (playlist?.track_ids?.length || 0) > next.length;
+        if (typeof queueContext.offset === 'number' && queueContext.offset > playlistStateRef.current.offset) {
+          playlistStateRef.current.offset = queueContext.offset;
+          playlistStateRef.current.hasNext = (playlist?.track_ids?.length || 0) > queueContext.offset;
+        }
         return next;
       });
     }
@@ -185,12 +188,13 @@ export function PlaylistDetailPage() {
       return;
     }
     const allIds = playlist?.track_ids ? playlist.track_ids.map(String) : [];
+    const currentOffset = playlistStateRef.current.offset;
     setQueue(tracks, 0, {
       type: 'playlist',
       id: String(playlist?.id),
       allTrackIds: allIds,
-      offset: tracks.length,
-      hasNext: allIds.length > tracks.length,
+      offset: currentOffset,
+      hasNext: allIds.length > currentOffset,
       total: playlist?.track_count ?? allIds.length,
     });
   };
@@ -202,12 +206,13 @@ export function PlaylistDetailPage() {
       return;
     }
     const allIds = playlist?.track_ids ? playlist.track_ids.map(String) : [];
+    const currentOffset = playlistStateRef.current.offset;
     setQueue(tracks, index, {
       type: 'playlist',
       id: String(playlist?.id),
       allTrackIds: allIds,
-      offset: tracks.length,
-      hasNext: allIds.length > tracks.length,
+      offset: currentOffset,
+      hasNext: allIds.length > currentOffset,
       total: playlist?.track_count ?? allIds.length,
     });
   };
@@ -216,12 +221,13 @@ export function PlaylistDetailPage() {
     if (tracks.length === 0) return;
     const shuffled = [...tracks].sort(() => Math.random() - 0.5);
     const allIds = playlist?.track_ids ? playlist.track_ids.map(String) : [];
+    const currentOffset = playlistStateRef.current.offset;
     setQueue(shuffled, 0, {
       type: 'playlist',
       id: String(playlist?.id),
       allTrackIds: allIds,
-      offset: tracks.length,
-      hasNext: allIds.length > tracks.length,
+      offset: currentOffset,
+      hasNext: allIds.length > currentOffset,
       total: playlist?.track_count ?? allIds.length,
     });
   };

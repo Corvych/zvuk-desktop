@@ -651,9 +651,39 @@ a:hover {
 .sidebar__footer {
   margin-top: auto;
   display: flex;
+  flex-direction: column;
   justify-content: center;
   align-items: center;
+  gap: 10px;
   width: 100%;
+}
+
+/* Update Sidebar Button */
+.sidebar__link--update {
+  background: transparent;
+  color: var(--text-secondary);
+  border: none;
+  box-shadow: none;
+}
+
+.sidebar__link--update:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.sidebar__tooltip--update {
+  min-width: 140px;
+}
+
+.app-layout--home .sidebar__link--update {
+  color: rgba(255, 255, 255, 0.7);
+  background: transparent;
+  border: none;
+}
+
+.app-layout--home .sidebar__link--update:hover {
+  color: #ffffff;
+  background: var(--bg-hover);
 }
 
 /* Tooltip floating to the right on hover */

@@ -500,4 +500,13 @@ export const updateDiscordActivity = (activity: DiscordActivity | null) =>
 export const getDiscordStatus = () =>
   invoke<DiscordStatus>('get_discord_status');
 
+export const updateTaskbarPlayback = (isPlaying: boolean, canPrev: boolean, canNext: boolean) => {
+  if (!isTauri()) return Promise.resolve();
+  return invoke<void>('update_taskbar_playback', { isPlaying, canPrev, canNext }).catch(() => {});
+};
+
+export const downloadAndInstallUpdate = (url: string, filename?: string) =>
+  invoke<void>('download_and_install_update', { url, filename });
+
+
 

@@ -7,3 +7,4 @@ pub mod recommendations;
 pub mod window;
 pub mod settings;
 pub mod discord;
+pub mod updater;

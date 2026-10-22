@@ -255,8 +255,7 @@ export const usePlayerStore = create<PlayerState>()(
         activeQueueFetchPromise = (async () => {
           try {
             if (queueContext.type === 'favourites') {
-              const currentQueue = get().queue;
-              const currentOffset = Math.max(queueContext.offset, currentQueue.length);
+              const currentOffset = queueContext.offset ?? get().queue.length;
               const res = await getLikedTracks(currentOffset, 50);
               if (activeFetchContextId !== thisFetchContextId) return false;
 
@@ -265,7 +264,7 @@ export const usePlayerStore = create<PlayerState>()(
                 const existingIds = new Set(freshQueue.map((t) => String(t.id)));
                 const newTracks = res.items.filter((t) => !existingIds.has(String(t.id)));
                 const nextQueue = [...freshQueue, ...newTracks];
-                const nextOffset = currentOffset + res.items.length;
+                const nextOffset = currentOffset + 50;
                 const hasNext = res.has_next;
                 set((state) => ({
                   queue: nextQueue,
@@ -308,8 +307,7 @@ export const usePlayerStore = create<PlayerState>()(
               }
 
               if (allTrackIds && allTrackIds.length > 0) {
-                const currentQueue = get().queue;
-                const currentOffset = Math.max(queueContext.offset, currentQueue.length);
+                const currentOffset = queueContext.offset ?? get().queue.length;
                 const nextSlice = allTrackIds.slice(currentOffset, currentOffset + 50);
                 if (nextSlice.length > 0) {
                   const res = await getTracksByIds(nextSlice);

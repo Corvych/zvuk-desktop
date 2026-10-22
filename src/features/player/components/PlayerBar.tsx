@@ -428,6 +428,9 @@ export function PlayerBar() {
             step="0.01"
             value={isMuted ? 0 : volume}
             onChange={handleVolumeChange}
+            style={{
+              background: `linear-gradient(to right, #ffffff 0%, #ffffff ${Math.round((isMuted ? 0 : volume) * 100)}%, rgba(255, 255, 255, 0.18) ${Math.round((isMuted ? 0 : volume) * 100)}%, rgba(255, 255, 255, 0.18) 100%)`,
+            }}
             title={`Громкость: ${Math.round((isMuted ? 0 : volume) * 100)}% (прокрутка колёсиком мыши)`}
           />
         </div>

@@ -1089,17 +1089,24 @@ impl ZvukApiClient {
             }
         "#;
 
-        let mut tracks = Vec::new();
+        let mut tracks = Vec::with_capacity(ids.len());
         for chunk in ids.chunks(50) {
             let data = self
                 .graphql(gql, serde_json::json!({ "ids": chunk }))
                 .await?;
 
+            let mut chunk_map = std::collections::HashMap::new();
             if let Some(items) = data.get("getTracks").and_then(|t| t.as_array()) {
                 for it in items {
                     if let Some(track) = parse_track_from_value(it) {
-                        tracks.push(track);
+                        chunk_map.insert(track.id.to_string(), track);
                     }
+                }
+            }
+
+            for id in chunk {
+                if let Some(track) = chunk_map.get(id) {
+                    tracks.push(track.clone());
                 }
             }
         }

@@ -84,11 +84,16 @@ export function FavouritesPage() {
     try {
       const res = await getLikedTracks(offset, PAGE_SIZE);
       if (res?.items) {
-        setLikedTracks((prev) => (offset === 0 ? res.items : [...prev, ...res.items]));
+        setLikedTracks((prev) => {
+          if (offset === 0) return res.items;
+          const existingIds = new Set(prev.map((t) => t.id));
+          const unique = res.items.filter((t) => !existingIds.has(t.id));
+          return [...prev, ...unique];
+        });
         if (typeof res.total === 'number') {
           setTracksTotal(res.total);
         }
-        const nextOffset = offset + res.items.length;
+        const nextOffset = offset + PAGE_SIZE;
         setTracksOffset(nextOffset);
         setTracksHasNext(res.has_next);
         tracksStateRef.current.hasNext = res.has_next;
@@ -117,11 +122,16 @@ export function FavouritesPage() {
     try {
       const res = await getLikedAlbums(offset, PAGE_SIZE);
       if (res?.items) {
-        setLikedAlbums((prev) => (offset === 0 ? res.items : [...prev, ...res.items]));
+        setLikedAlbums((prev) => {
+          if (offset === 0) return res.items;
+          const existingIds = new Set(prev.map((a) => a.id));
+          const unique = res.items.filter((a) => !existingIds.has(a.id));
+          return [...prev, ...unique];
+        });
         if (typeof res.total === 'number') {
           setAlbumsTotal(res.total);
         }
-        const nextOffset = offset + res.items.length;
+        const nextOffset = offset + PAGE_SIZE;
         setAlbumsOffset(nextOffset);
         setAlbumsHasNext(res.has_next);
         albumsStateRef.current.hasNext = res.has_next;
@@ -204,8 +214,10 @@ export function FavouritesPage() {
         const newTracks = queue.filter((t) => !existingIds.has(String(t.id)));
         if (newTracks.length === 0) return prev;
         const next = [...prev, ...newTracks];
-        tracksStateRef.current.offset = next.length;
-        setTracksOffset(next.length);
+        if (typeof queueContext.offset === 'number' && queueContext.offset > tracksStateRef.current.offset) {
+          tracksStateRef.current.offset = queueContext.offset;
+          setTracksOffset(queueContext.offset);
+        }
         return next;
       });
     }
@@ -215,10 +227,11 @@ export function FavouritesPage() {
     if (currentTrack?.id === track.id) {
       togglePlay();
     } else {
-      const hasNext = tracksStateRef.current.hasNext || (tracksTotal ? likedTracks.length < tracksTotal : false);
+      const currentOffset = tracksStateRef.current.offset;
+      const hasNext = tracksStateRef.current.hasNext || (tracksTotal ? currentOffset < tracksTotal : false);
       setQueue(likedTracks, idx, {
         type: 'favourites',
-        offset: likedTracks.length,
+        offset: currentOffset,
         hasNext,
         total: tracksTotal ?? undefined,
       });
@@ -231,10 +244,11 @@ export function FavouritesPage() {
       togglePlay();
       return;
     }
-    const hasNext = tracksStateRef.current.hasNext || (tracksTotal ? likedTracks.length < tracksTotal : false);
+    const currentOffset = tracksStateRef.current.offset;
+    const hasNext = tracksStateRef.current.hasNext || (tracksTotal ? currentOffset < tracksTotal : false);
     setQueue(likedTracks, 0, {
       type: 'favourites',
-      offset: likedTracks.length,
+      offset: currentOffset,
       hasNext,
       total: tracksTotal ?? undefined,
     });
@@ -243,10 +257,11 @@ export function FavouritesPage() {
   const handleShufflePlay = () => {
     if (likedTracks.length === 0) return;
     const shuffled = [...likedTracks].sort(() => Math.random() - 0.5);
-    const hasNext = tracksStateRef.current.hasNext || (tracksTotal ? likedTracks.length < tracksTotal : false);
+    const currentOffset = tracksStateRef.current.offset;
+    const hasNext = tracksStateRef.current.hasNext || (tracksTotal ? currentOffset < tracksTotal : false);
     setQueue(shuffled, 0, {
       type: 'favourites',
-      offset: likedTracks.length,
+      offset: currentOffset,
       hasNext,
       total: tracksTotal ?? undefined,
     });

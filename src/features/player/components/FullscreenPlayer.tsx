@@ -116,8 +116,8 @@ function parseLyrics(rawLyrics: string, isSynced: boolean): LyricLine[] {
           const wEnd = sp[2]
             ? parseTtmlTime(sp[2])
             : j < spans.length - 1
-            ? parseTtmlTime(spans[j + 1][1])
-            : (lineEnd ?? (wStart + 1.0));
+              ? parseTtmlTime(spans[j + 1][1])
+              : (lineEnd ?? (wStart + 1.0));
           const wText = sp[3].replace(/<[^>]+>/g, '').trim();
           if (!wText) continue;
 
@@ -607,11 +607,11 @@ export function FullscreenPlayer() {
     name: string;
     desc: string;
   }[] = [
-    { id: 'betterlyrics', name: 'Better Lyrics', desc: 'Словарная караоке-синхронизация (Apple Music / TTML)' },
-    { id: 'zvuk', name: 'Звук Официальный', desc: 'Официальные студийные тексты' },
-    { id: 'netease', name: 'NetEase Music', desc: 'Enhanced LRC / слоговая синхронизация' },
-    { id: 'lrclib', name: 'LRCLIB', desc: 'Открытая база текстов и таймингов' },
-  ];
+      { id: 'betterlyrics', name: 'Better Lyrics', desc: 'Словарная караоке-синхронизация (Apple Music / TTML)' },
+      { id: 'zvuk', name: 'Звук Официальный', desc: 'Официальные студийные тексты' },
+      { id: 'netease', name: 'NetEase Music', desc: 'Enhanced LRC / слоговая синхронизация' },
+      { id: 'lrclib', name: 'LRCLIB', desc: 'Открытая база текстов и таймингов' },
+    ];
 
   const availableSourcesWithText = useMemo(() => {
     return Object.values(sourcesAvailability).filter((s) => s.status === 'available').length;
@@ -1083,6 +1083,9 @@ export function FullscreenPlayer() {
                 onChange={(e) => setVolume(parseFloat(e.target.value))}
                 onPointerUp={(e) => (e.target as HTMLElement).blur()}
                 onPointerLeave={(e) => (e.target as HTMLElement).blur()}
+                style={{
+                  background: `linear-gradient(to right, #ffffff 0%, #ffffff ${Math.round((isMuted ? 0 : volume) * 100)}%, rgba(255, 255, 255, 0.18) ${Math.round((isMuted ? 0 : volume) * 100)}%, rgba(255, 255, 255, 0.18) 100%)`,
+                }}
                 title={`Громкость: ${Math.round((isMuted ? 0 : volume) * 100)}% (прокрутка колёсиком мыши)`}
               />
             </div>
@@ -1225,9 +1228,8 @@ export function FullscreenPlayer() {
               <div className="fullscreen-lyrics-source-selector" ref={sourceMenuRef}>
                 <button
                   type="button"
-                  className={`fullscreen-lyrics-source-tag fullscreen-lyrics-source-tag--interactive ${
-                    sourceMenuOpen ? 'fullscreen-lyrics-source-tag--open' : ''
-                  }`}
+                  className={`fullscreen-lyrics-source-tag fullscreen-lyrics-source-tag--interactive ${sourceMenuOpen ? 'fullscreen-lyrics-source-tag--open' : ''
+                    }`}
                   onClick={() => setSourceMenuOpen((prev) => !prev)}
                   title="Выбрать источник текста песни"
                 >
@@ -1236,9 +1238,8 @@ export function FullscreenPlayer() {
                   </span>
                   {lyricsInfo && (
                     <span
-                      className={`fullscreen-lyrics-source-tag__type ${
-                        lyricsInfo.has_word_sync || lyricsInfo.is_synced ? 'fullscreen-lyrics-source-tag__type--synced' : ''
-                      }`}
+                      className={`fullscreen-lyrics-source-tag__type ${lyricsInfo.has_word_sync || lyricsInfo.is_synced ? 'fullscreen-lyrics-source-tag__type--synced' : ''
+                        }`}
                     >
                       {lyricsInfo.has_word_sync ? 'Karaoke' : lyricsInfo.is_synced ? 'LRC' : 'TXT'}
                     </span>
@@ -1252,9 +1253,8 @@ export function FullscreenPlayer() {
                     </span>
                   )}
                   <svg
-                    className={`fullscreen-lyrics-source-tag__chevron ${
-                      sourceMenuOpen ? 'fullscreen-lyrics-source-tag__chevron--open' : ''
-                    }`}
+                    className={`fullscreen-lyrics-source-tag__chevron ${sourceMenuOpen ? 'fullscreen-lyrics-source-tag__chevron--open' : ''
+                      }`}
                     width="10"
                     height="10"
                     viewBox="0 0 24 24"
@@ -1275,8 +1275,8 @@ export function FullscreenPlayer() {
                           {availableSourcesWithText > 0
                             ? `Найдено в ${availableSourcesWithText} из 4 провайдеров`
                             : isAnySourceProbing
-                            ? 'Проверка доступности...'
-                            : 'Поиск по провайдерам'}
+                              ? 'Проверка доступности...'
+                              : 'Поиск по провайдерам'}
                         </span>
                       </div>
                       {preferredSource && (
@@ -1306,9 +1306,8 @@ export function FullscreenPlayer() {
                           <button
                             key={opt.id}
                             type="button"
-                            className={`fullscreen-lyrics-source-menu__item ${
-                              isCurrent ? 'fullscreen-lyrics-source-menu__item--active' : ''
-                            } ${!isAvailable && probe?.status !== 'loading' ? 'fullscreen-lyrics-source-menu__item--unavailable' : ''}`}
+                            className={`fullscreen-lyrics-source-menu__item ${isCurrent ? 'fullscreen-lyrics-source-menu__item--active' : ''
+                              } ${!isAvailable && probe?.status !== 'loading' ? 'fullscreen-lyrics-source-menu__item--unavailable' : ''}`}
                             onClick={() => {
                               setPreferredSource(opt.id);
                               setSourceMenuOpen(false);
@@ -1356,9 +1355,8 @@ export function FullscreenPlayer() {
                 </button>
                 <button
                   type="button"
-                  className={`fullscreen-lyrics-offset-val ${
-                    timingOffset !== 0 ? 'fullscreen-lyrics-offset-val--active' : ''
-                  }`}
+                  className={`fullscreen-lyrics-offset-val ${timingOffset !== 0 ? 'fullscreen-lyrics-offset-val--active' : ''
+                    }`}
                   onClick={resetTimingOffset}
                   title="Сбросить сдвиг таймингов"
                 >
@@ -1406,8 +1404,8 @@ export function FullscreenPlayer() {
                       const opacityAmount = isActive
                         ? 1
                         : isPast
-                        ? Math.max(0.35, 0.75 - distance * 0.08)
-                        : Math.max(0.18, 0.5 - distance * 0.08);
+                          ? Math.max(0.35, 0.75 - distance * 0.08)
+                          : Math.max(0.18, 0.5 - distance * 0.08);
 
                       return (
                         <div
@@ -1415,15 +1413,14 @@ export function FullscreenPlayer() {
                           ref={(el) => {
                             lineRefs.current[idx] = el;
                           }}
-                          className={`fullscreen-lyric-line ${
-                            isActive
+                          className={`fullscreen-lyric-line ${isActive
                               ? 'fullscreen-lyric-line--active'
                               : isPast
-                              ? 'fullscreen-lyric-line--past'
-                              : isFuture
-                              ? 'fullscreen-lyric-line--future'
-                              : ''
-                          } ${isSynced ? 'fullscreen-lyric-line--clickable' : ''}`}
+                                ? 'fullscreen-lyric-line--past'
+                                : isFuture
+                                  ? 'fullscreen-lyric-line--future'
+                                  : ''
+                            } ${isSynced ? 'fullscreen-lyric-line--clickable' : ''}`}
                           style={{
                             '--line-fill': isActive ? `${(activeLineProgress * 100).toFixed(1)}%` : isPast ? '100%' : '0%',
                             filter: isSynced ? `blur(${blurAmount}px)` : 'none',
@@ -1450,25 +1447,24 @@ export function FullscreenPlayer() {
                                 const wordFill = isWordPast
                                   ? 100
                                   : isWordActive
-                                  ? Math.min(
+                                    ? Math.min(
                                       100,
                                       Math.max(
                                         0,
                                         ((effectiveSmoothTime - word.time) / wordDuration) * 100
                                       )
                                     )
-                                  : 0;
+                                    : 0;
 
                                 return (
                                   <span
                                     key={wIdx}
-                                    className={`fullscreen-lyric-word ${
-                                      isWordActive
+                                    className={`fullscreen-lyric-word ${isWordActive
                                         ? 'fullscreen-lyric-word--active'
                                         : isWordPast
-                                        ? 'fullscreen-lyric-word--past'
-                                        : 'fullscreen-lyric-word--future'
-                                    } ${!word.hasSpaceAfter ? 'fullscreen-lyric-word--no-space' : ''}`}
+                                          ? 'fullscreen-lyric-word--past'
+                                          : 'fullscreen-lyric-word--future'
+                                      } ${!word.hasSpaceAfter ? 'fullscreen-lyric-word--no-space' : ''}`}
                                     style={{ '--word-fill': `${wordFill.toFixed(1)}%` } as React.CSSProperties}
                                   >
                                     <span className="fullscreen-lyric-word__inner">{word.text}</span>
