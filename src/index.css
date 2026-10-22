@@ -204,7 +204,7 @@ a:hover {
   position: relative;
   overflow: hidden;
   transition: opacity 0.85s cubic-bezier(0.2, 0.9, 0.3, 1),
-              transform 0.85s cubic-bezier(0.2, 0.9, 0.3, 1);
+    transform 0.85s cubic-bezier(0.2, 0.9, 0.3, 1);
   will-change: opacity, transform;
 }
 
@@ -240,6 +240,7 @@ a:hover {
     opacity: 0;
     transform: translateX(-14px);
   }
+
   to {
     opacity: 1;
     transform: translateX(0);
@@ -251,6 +252,7 @@ a:hover {
     opacity: 0;
     transform: translateY(14px);
   }
+
   to {
     opacity: 1;
     transform: translateY(0);
@@ -261,6 +263,7 @@ a:hover {
   from {
     opacity: 0;
   }
+
   to {
     opacity: 1;
   }
@@ -4772,27 +4775,62 @@ a:hover {
 }
 
 @keyframes orb-drift-1 {
-  0% { transform: translate(0, 0) scale(1) rotate(0deg); }
-  50% { transform: translate(6vw, 8vh) scale(1.12) rotate(45deg); }
-  100% { transform: translate(-4vw, 14vh) scale(0.92) rotate(90deg); }
+  0% {
+    transform: translate(0, 0) scale(1) rotate(0deg);
+  }
+
+  50% {
+    transform: translate(6vw, 8vh) scale(1.12) rotate(45deg);
+  }
+
+  100% {
+    transform: translate(-4vw, 14vh) scale(0.92) rotate(90deg);
+  }
 }
 
 @keyframes orb-drift-2 {
-  0% { transform: translate(0, 0) scale(1.05) rotate(0deg); }
-  50% { transform: translate(-8vw, -6vh) scale(0.9) rotate(-60deg); }
-  100% { transform: translate(-14vw, 10vh) scale(1.18) rotate(-120deg); }
+  0% {
+    transform: translate(0, 0) scale(1.05) rotate(0deg);
+  }
+
+  50% {
+    transform: translate(-8vw, -6vh) scale(0.9) rotate(-60deg);
+  }
+
+  100% {
+    transform: translate(-14vw, 10vh) scale(1.18) rotate(-120deg);
+  }
 }
 
 @keyframes orb-drift-3 {
-  0% { transform: translate(0, 0) scale(0.95); }
-  50% { transform: translate(10vw, -10vh) scale(1.15); }
-  100% { transform: translate(-6vw, -4vh) scale(1.02); }
+  0% {
+    transform: translate(0, 0) scale(0.95);
+  }
+
+  50% {
+    transform: translate(10vw, -10vh) scale(1.15);
+  }
+
+  100% {
+    transform: translate(-6vw, -4vh) scale(1.02);
+  }
 }
 
 @keyframes orb-drift-4 {
-  0% { transform: scale(0.85) translate(0, 0); opacity: 0.35; }
-  50% { transform: scale(1.22) translate(4vw, -5vh); opacity: 0.65; }
-  100% { transform: scale(0.95) translate(-5vw, 6vh); opacity: 0.4; }
+  0% {
+    transform: scale(0.85) translate(0, 0);
+    opacity: 0.35;
+  }
+
+  50% {
+    transform: scale(1.22) translate(4vw, -5vh);
+    opacity: 0.65;
+  }
+
+  100% {
+    transform: scale(0.95) translate(-5vw, 6vh);
+    opacity: 0.4;
+  }
 }
 
 .fullscreen-overlay__glass-noise {
@@ -4830,7 +4868,7 @@ a:hover {
   width: 40px;
 }
 
-/* Bracketed Tabs: [ О ТРЕКЕ / СЛОВА / ОЧЕРЕДЬ ] */
+/* Bracketed Tabs: [ ОБЛОЖКА / СЛОВА / ОЧЕРЕДЬ ] */
 .fullscreen-tabs {
   display: flex;
   align-items: center;
@@ -4841,7 +4879,7 @@ a:hover {
 }
 
 .fullscreen-tabs__bracket {
-  color: #d19a48;
+  color: #FFFFFF;
   font-weight: 800;
   font-size: 16px;
   user-select: none;
@@ -5599,6 +5637,7 @@ a:hover {
     opacity: 0;
     transform: translateY(-6px) scale(0.96);
   }
+
   to {
     opacity: 1;
     transform: translateY(0) scale(1);
@@ -5803,6 +5842,7 @@ a:hover {
   from {
     opacity: 0.6;
   }
+
   to {
     opacity: 1;
   }
@@ -6230,8 +6270,13 @@ a:hover {
 }
 
 @keyframes fadeInModal {
-  from { opacity: 0; }
-  to { opacity: 1; }
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
 }
 
 .add-to-pl-card {
@@ -6254,6 +6299,7 @@ a:hover {
     transform: scale(0.95) translateY(10px);
     opacity: 0;
   }
+
   to {
     transform: scale(1) translateY(0);
     opacity: 1;
@@ -6813,8 +6859,15 @@ a:hover {
 }
 
 @keyframes pulseOpacity {
-  0%, 100% { opacity: 0.5; }
-  50% { opacity: 1; }
+
+  0%,
+  100% {
+    opacity: 0.5;
+  }
+
+  50% {
+    opacity: 1;
+  }
 }
 
 .edit-pl-publicity-desc {
@@ -6865,15 +6918,15 @@ a:hover {
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
 }
 
-.edit-pl-switch input:checked + .edit-pl-switch-slider {
+.edit-pl-switch input:checked+.edit-pl-switch-slider {
   background-color: var(--accent, #70dc55);
 }
 
-.edit-pl-switch input:checked + .edit-pl-switch-slider:before {
+.edit-pl-switch input:checked+.edit-pl-switch-slider:before {
   transform: translateX(20px);
 }
 
-.edit-pl-switch input:disabled + .edit-pl-switch-slider {
+.edit-pl-switch input:disabled+.edit-pl-switch-slider {
   opacity: 0.5;
   cursor: not-allowed;
 }

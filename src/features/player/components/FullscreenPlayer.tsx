@@ -839,7 +839,7 @@ export function FullscreenPlayer() {
       <header className="fullscreen-overlay__header">
         <div className="fullscreen-overlay__header-spacer" />
 
-        {/* Bracketed Tabs: [ О ТРЕКЕ / СЛОВА / ОЧЕРЕДЬ ] */}
+        {/* Bracketed Tabs: [ ОБЛОЖКА / СЛОВА / ОЧЕРЕДЬ ] */}
         <nav className="fullscreen-tabs" aria-label="Режимы полноэкранного плеера">
           <span className="fullscreen-tabs__bracket">[</span>
           <button
@@ -847,7 +847,7 @@ export function FullscreenPlayer() {
             className={`fullscreen-tabs__btn ${fullscreenTab === 'track' ? 'fullscreen-tabs__btn--active' : ''}`}
             onClick={() => setFullscreenTab('track')}
           >
-            О ТРЕКЕ
+            ОБЛОЖКА
           </button>
           <span className="fullscreen-tabs__sep">/</span>
           <button
@@ -1414,12 +1414,12 @@ export function FullscreenPlayer() {
                             lineRefs.current[idx] = el;
                           }}
                           className={`fullscreen-lyric-line ${isActive
-                              ? 'fullscreen-lyric-line--active'
-                              : isPast
-                                ? 'fullscreen-lyric-line--past'
-                                : isFuture
-                                  ? 'fullscreen-lyric-line--future'
-                                  : ''
+                            ? 'fullscreen-lyric-line--active'
+                            : isPast
+                              ? 'fullscreen-lyric-line--past'
+                              : isFuture
+                                ? 'fullscreen-lyric-line--future'
+                                : ''
                             } ${isSynced ? 'fullscreen-lyric-line--clickable' : ''}`}
                           style={{
                             '--line-fill': isActive ? `${(activeLineProgress * 100).toFixed(1)}%` : isPast ? '100%' : '0%',
@@ -1460,10 +1460,10 @@ export function FullscreenPlayer() {
                                   <span
                                     key={wIdx}
                                     className={`fullscreen-lyric-word ${isWordActive
-                                        ? 'fullscreen-lyric-word--active'
-                                        : isWordPast
-                                          ? 'fullscreen-lyric-word--past'
-                                          : 'fullscreen-lyric-word--future'
+                                      ? 'fullscreen-lyric-word--active'
+                                      : isWordPast
+                                        ? 'fullscreen-lyric-word--past'
+                                        : 'fullscreen-lyric-word--future'
                                       } ${!word.hasSpaceAfter ? 'fullscreen-lyric-word--no-space' : ''}`}
                                     style={{ '--word-fill': `${wordFill.toFixed(1)}%` } as React.CSSProperties}
                                   >

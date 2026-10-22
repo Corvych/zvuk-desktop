@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { getLikedTracks, getLikedAlbums, getPersonalWave, type Track, type Album } from '../../../api';
+import { getLikedTracks, getLikedAlbums, getPersonalWave, getTracksByIds, type Track, type Album } from '../../../api';
 import { usePlayerStore } from '../../player/playerStore';
 import { useFavouritesStore } from '../favouritesStore';
 import { formatTime, pluralizeTracks } from '../../../lib/formatters';
@@ -36,6 +36,8 @@ export function FavouritesPage() {
 
   const isLiked = useFavouritesStore((s) => s.isLiked);
   const toggleLikeTrack = useFavouritesStore((s) => s.toggleLikeTrack);
+  const likedTrackIds = useFavouritesStore((s) => s.likedTrackIds);
+  const prevLikedTrackIdsRef = useRef<Set<number>>(new Set());
 
   // ── Tracks state ──────────────────────────────────────────────────────────
   const [likedTracks, setLikedTracks] = useState<Track[]>([]);
@@ -111,6 +113,11 @@ export function FavouritesPage() {
       tracksStateRef.current.loading = false;
       setTracksLoading(false);
       setTracksInitialized(true);
+      // Seed the "previous" snapshot so that the first run of the like-sync
+      // effect doesn't treat all existing liked IDs as newly added.
+      prevLikedTrackIdsRef.current = new Set(
+        useFavouritesStore.getState().likedTrackIds
+      );
     }
   }, []);
 
@@ -222,6 +229,54 @@ export function FavouritesPage() {
       });
     }
   }, [queue, queueContext, likedTracks.length]);
+
+  // ── React to like/unlike changes from the store ───────────────────────────
+  useEffect(() => {
+    if (!tracksInitialized) return;
+
+    const prev = prevLikedTrackIdsRef.current;
+    const curr = likedTrackIds;
+
+    // Find newly liked tracks (added to curr but not in prev)
+    const addedIds: number[] = [];
+    curr.forEach((id) => {
+      if (!prev.has(id)) addedIds.push(id);
+    });
+
+    // Find newly unliked tracks (removed from curr)
+    const removedIds: number[] = [];
+    prev.forEach((id) => {
+      if (!curr.has(id)) removedIds.push(id);
+    });
+
+    if (removedIds.length > 0) {
+      setLikedTracks((prevTracks) => prevTracks.filter((t) => !removedIds.includes(Number(t.id))));
+      setTracksTotal((prevTotal) => (prevTotal !== null ? Math.max(0, prevTotal - removedIds.length) : null));
+    }
+
+    if (addedIds.length > 0) {
+      // Load full track objects for newly liked tracks and prepend them to the list
+      getTracksByIds(addedIds)
+        .then((tracks) => {
+          if (tracks && tracks.length > 0) {
+            setLikedTracks((prevTracks) => {
+              const existingIds = new Set(prevTracks.map((t) => Number(t.id)));
+              const newTracks = tracks.filter((t) => !existingIds.has(Number(t.id)));
+              if (newTracks.length === 0) return prevTracks;
+              return [...newTracks, ...prevTracks];
+            });
+          }
+        })
+        .catch((err) => {
+          console.error('[FavouritesPage] Failed to load newly liked tracks:', err);
+        });
+      // Update counter optimistically
+      setTracksTotal((prevTotal) => (prevTotal !== null ? prevTotal + addedIds.length : null));
+    }
+
+    prevLikedTrackIdsRef.current = new Set(curr);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [likedTrackIds]);
 
   const handleTrackClick = (track: Track, idx: number) => {
     if (currentTrack?.id === track.id) {

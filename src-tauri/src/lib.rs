@@ -1,4 +1,5 @@
 mod api_client;
+mod audio_session;
 mod commands;
 mod discord_rpc;
 mod error;
@@ -94,6 +95,8 @@ pub fn run() {
                 }
             }
             commands::auth::start_global_auth_listener(app.handle().clone());
+            #[cfg(windows)]
+            audio_session::windows_audio::set_audio_session_name_async("Zvuk Desktop");
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

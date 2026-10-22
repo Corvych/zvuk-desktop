@@ -17,14 +17,18 @@ import { SilaZvukaHero } from './SilaZvukaHero';
 import { pluralizeTracks, formatRelativeTime } from '../../../lib/formatters';
 import { ArtistLinks } from '../../../components/ArtistLinks';
 import { PlaylistCover } from '../../playlists/components/PlaylistCover';
+import { useFavouritesStore } from '../../favourites/favouritesStore';
 
 
 export function HomePage() {
   const { setQueue } = usePlayerStore();
   const navigate = useNavigate();
 
+  // Количество лайков берём реактивно из стора, чтобы обновлялся мгновенно
+  const likedTrackIds = useFavouritesStore((s) => s.likedTrackIds);
+  const likedCount = likedTrackIds.size;
+
   const [likedTracks, setLikedTracks] = useState<Track[]>([]);
-  const [likedCount, setLikedCount] = useState<number>(0);
   const [editorialPlaylists, setEditorialPlaylists] = useState<Playlist[]>([]);
   const [recommendations, setRecommendations] = useState<MusicRecommendationItem[]>([]);
   const [showAllRecs, setShowAllRecs] = useState<boolean>(false);
@@ -80,7 +84,6 @@ export function HomePage() {
 
         if (likedRes.status === 'fulfilled' && likedRes.value) {
           setLikedTracks(likedRes.value.items || []);
-          setLikedCount(likedRes.value.total ?? (likedRes.value.items?.length || 0));
         }
         if (editorialRes.status === 'fulfilled' && Array.isArray(editorialRes.value)) {
           setEditorialPlaylists(editorialRes.value);

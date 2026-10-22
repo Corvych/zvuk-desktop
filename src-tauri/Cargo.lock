@@ -5962,5 +5962,6 @@ dependencies = [
  "tauri-winrt-notification",
  "thiserror 2.0.19",
  "tokio",
+ "windows 0.61.3",
  "windows-sys 0.59.0",
 ]
