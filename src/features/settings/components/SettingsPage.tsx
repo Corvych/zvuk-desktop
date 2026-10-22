@@ -150,7 +150,6 @@ export function SettingsPage() {
     checkForUpdates,
     openModal: openUpdateModal,
     lastChecked: lastUpdateChecked,
-    triggerTestUpdate,
   } = useUpdateStore();
 
   const handleManualCheckUpdates = async () => {
