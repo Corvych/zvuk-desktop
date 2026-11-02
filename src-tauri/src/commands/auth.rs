@@ -150,21 +150,49 @@ pub async fn open_sber_id_login(app: AppHandle) -> Result<(), AppError> {
             window.addEventListener('focus', checkAuth);
             window.addEventListener('load', checkAuth);
 
-            // Floating manual trigger button for instant completion
+            // Floating manual trigger buttons for instant completion and switching account
             function injectBanner() {
                 try {
                     if (!window.location.hostname.includes('zvuk.com')) return;
-                    if (document.getElementById('__tauri_auth_btn__')) return;
+                    if (document.getElementById('__tauri_auth_container__')) return;
 
-                    const bar = document.createElement('button');
-                    bar.id = '__tauri_auth_btn__';
-                    bar.style.cssText = 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);z-index:2147483640;background:#21A038;color:#fff;border:none;padding:12px 24px;border-radius:30px;font-family:-apple-system,BlinkMacSystemFont,sans-serif;font-size:14px;font-weight:bold;cursor:pointer;box-shadow:0 6px 20px rgba(0,0,0,0.6);display:flex;align-items:center;gap:8px;';
-                    bar.innerHTML = '<span>✔</span><span>Я вошел — завершить вход</span>';
-                    bar.onclick = function() {
-                        bar.innerText = 'Проверка авторизации...';
+                    const container = document.createElement('div');
+                    container.id = '__tauri_auth_container__';
+                    container.style.cssText = 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);z-index:2147483640;display:flex;align-items:center;gap:10px;font-family:-apple-system,BlinkMacSystemFont,sans-serif;';
+
+                    const okBtn = document.createElement('button');
+                    okBtn.id = '__tauri_auth_btn__';
+                    okBtn.style.cssText = 'background:#21A038;color:#fff;border:none;padding:12px 22px;border-radius:30px;font-size:14px;font-weight:bold;cursor:pointer;box-shadow:0 6px 20px rgba(0,0,0,0.6);display:flex;align-items:center;gap:8px;';
+                    okBtn.innerHTML = '<span>✔</span><span>Я вошел — завершить вход</span>';
+                    okBtn.onclick = function() {
+                        okBtn.innerText = 'Проверка авторизации...';
                         checkAuth();
                     };
-                    document.body.appendChild(bar);
+
+                    const switchBtn = document.createElement('button');
+                    switchBtn.id = '__tauri_switch_account_btn__';
+                    switchBtn.style.cssText = 'background:rgba(30,30,35,0.92);backdrop-filter:blur(10px);color:#ff6b6b;border:1px solid rgba(255,107,107,0.4);padding:12px 18px;border-radius:30px;font-size:13px;font-weight:600;cursor:pointer;box-shadow:0 6px 20px rgba(0,0,0,0.6);display:flex;align-items:center;gap:6px;';
+                    switchBtn.innerHTML = '<span>🚪</span><span>Сменить Сбер ID / Выйти</span>';
+                    switchBtn.onclick = async function() {
+                        switchBtn.innerText = 'Сброс...';
+                        try { await fetch('/api/v2/tiny/logout', { method: 'POST', credentials: 'include' }); } catch(e) {}
+                        try { await fetch('/desktop-data/api/cookieAPI/logout', { credentials: 'include' }); } catch(e) {}
+                        try {
+                            const cookies = document.cookie.split(";");
+                            for (let i = 0; i < cookies.length; i++) {
+                                const c = cookies[i];
+                                const eq = c.indexOf("=");
+                                const name = eq > -1 ? c.substring(0, eq).trim() : c.trim();
+                                document.cookie = name + "=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/;domain=.zvuk.com";
+                                document.cookie = name + "=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/";
+                            }
+                        } catch(e) {}
+                        window.location.href = 'https://zvuk.com/logout';
+                    };
+
+                    container.appendChild(okBtn);
+                    container.appendChild(switchBtn);
+                    document.body.appendChild(container);
                 } catch(e) {}
             }
 
@@ -188,6 +216,7 @@ pub async fn open_sber_id_login(app: AppHandle) -> Result<(), AppError> {
         .maximizable(true)
         .minimizable(true)
         .closable(true)
+        .incognito(true)
         .initialization_script(script)
         .on_navigation(move |url| {
             let url_str = url.as_str();
@@ -539,6 +568,26 @@ pub async fn logout(state: State<'_, AppState>) -> Result<(), AppError> {
     *user = None;
 
     log::info!("User logged out");
+    Ok(())
+}
+
+/// Reset Sber ID session, log out current user, and close any open login window.
+#[tauri::command]
+pub async fn reset_sber_id_session(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
+    state.api_client.clear_token().await;
+    let _ = token_manager::delete_token();
+
+    let mut user = state.current_user.lock().unwrap();
+    *user = None;
+
+    if let Some(win) = app.get_webview_window("sberid-login") {
+        let _ = win.close();
+    }
+
+    log::info!("Sber ID session reset and user logged out");
     Ok(())
 }
 

@@ -177,6 +177,18 @@ export function LoginPage() {
           {isSberIdOpening ? 'Открываем окно Сбер ID...' : 'Войти со Сбер ID'}
         </button>
 
+        <div style={{ display: 'flex', justifyContent: 'center', marginTop: '-6px', marginBottom: '14px' }}>
+          <button
+            type="button"
+            className="btn btn--ghost"
+            style={{ fontSize: '12px', color: 'var(--text-secondary)', textDecoration: 'underline', padding: '2px 8px' }}
+            onClick={useAuthStore.getState().resetSberIdAndSwitchAccount}
+            title="Сбросить сохранённую сессию Сбер ID и открыть чистое окно входа"
+          >
+            Войти под другим Сбер ID
+          </button>
+        </div>
+
         <button
           type="button"
           className="btn btn--secondary w-full"

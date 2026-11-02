@@ -70,5 +70,25 @@ pub async fn get_lyrics(
     state.api_client.get_lyrics(id).await
 }
 
+/// Fetch HLS AES-128 key via authenticated backend.
+#[tauri::command]
+pub async fn fetch_audio_key(
+    url: String,
+    encrypted_key: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<Vec<u8>, AppError> {
+    state.api_client.fetch_audio_key(&url, encrypted_key.as_deref()).await
+}
+
+/// Proxy GET request to external services (e.g. NetEase lyrics) to bypass CORS.
+#[tauri::command]
+pub async fn fetch_proxy(
+    url: String,
+    headers: Option<std::collections::HashMap<String, String>>,
+    state: State<'_, AppState>,
+) -> Result<String, AppError> {
+    state.api_client.fetch_proxy(&url, headers).await
+}
+
 
 

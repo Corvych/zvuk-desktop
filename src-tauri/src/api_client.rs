@@ -679,85 +679,394 @@ impl ZvukApiClient {
 
     // ─── Audio Stream ───────────────────────────────────────────────────
 
-    /// Resolves stream URL for playback.
-    /// Tries the direct high-quality Tiny API first, then falls back to GraphQL getStream (CDN MP3 preview).
-    pub async fn get_stream_url(&self, id: i64, quality: &str) -> Result<StreamInfo, AppError> {
-        let q_lower = quality.to_lowercase();
-        let q_enum = match q_lower.as_str() {
-            "flac" => StreamQuality::Flac,
-            "high" => StreamQuality::High,
-            "low" => StreamQuality::Low,
-            _ => StreamQuality::Mid,
-        };
+    fn stream_debug_log(msg: &str) {
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open("stream_debug.log")
+        {
+            use std::io::Write;
+            let _ = writeln!(f, "[STREAM_DEBUG] {}", msg);
+        }
+        log::info!("[STREAM_DEBUG] {}", msg);
+    }
 
-        // 1. Try direct stream via Tiny API (for authorized / high-quality users)
-        let tiny_path = format!("{}/track/stream?id={}&quality={}", TINY_API_URL, id, q_lower);
-        if let Ok(headers) = self.auth_headers().await {
-            if let Ok(res) = self.http.get(&tiny_path).headers(headers).send().await {
-                if res.status().is_success() {
-                    if let Ok(body) = res.json::<Value>().await {
-                        if let Some(stream_url) = body
-                            .get("result")
-                            .and_then(|r| r.get("stream"))
-                            .and_then(|s| s.as_str())
-                        {
-                            return Ok(StreamInfo {
-                                url: stream_url.to_string(),
-                                quality: q_enum,
-                                codec: "mp3".to_string(),
-                                bitrate: Some(if q_lower == "high" { 320 } else { 128 }),
-                                is_drm: false,
-                                license_url: None,
-                            });
+    /// Probes the stream URL header (up to 4096 bytes) to extract accurate container codec,
+    /// sample rate (Hz), bit depth (bits per sample), channels, and bitrate directly from file headers.
+    pub async fn probe_stream_metadata(
+        &self,
+        url: &str,
+    ) -> (String, Option<u32>, Option<u32>, Option<u8>, Option<u8>) {
+        Self::stream_debug_log(&format!("probe_stream_metadata: probing URL: {}", url));
+        let mut codec = "MP3".to_string();
+        let mut bitrate: Option<u32> = None;
+        let mut sample_rate: Option<u32> = None;
+        let mut bit_depth: Option<u8> = None;
+        let mut channels: Option<u8> = None;
+
+        // Probe first 4096 bytes with a quick 2.5-second timeout
+        let client = &self.http;
+        let probe_res = tokio::time::timeout(
+            std::time::Duration::from_millis(2500),
+            client
+                .get(url)
+                .header(USER_AGENT, APP_USER_AGENT)
+                .header(reqwest::header::REFERER, "https://zvuk.com/")
+                .header("Range", "bytes=0-4096")
+                .send(),
+        )
+        .await;
+
+        match &probe_res {
+            Ok(Ok(resp)) => {
+                Self::stream_debug_log(&format!("probe HTTP status: {}", resp.status()));
+            }
+            Ok(Err(e)) => {
+                Self::stream_debug_log(&format!("probe HTTP error: {}", e));
+            }
+            Err(_) => {
+                Self::stream_debug_log("probe timed out (2500ms)");
+            }
+        }
+
+        if let Ok(Ok(resp)) = probe_res {
+            let total_size_from_range = resp
+                .headers()
+                .get("Content-Range")
+                .and_then(|h| h.to_str().ok())
+                .and_then(|s| s.split('/').last())
+                .and_then(|len_str| len_str.parse::<u64>().ok())
+                .or_else(|| resp.content_length());
+
+            if let Ok(bytes) = resp.bytes().await {
+                Self::stream_debug_log(&format!(
+                    "probe received {} bytes, first 16 bytes: {:02X?}",
+                    bytes.len(),
+                    &bytes[..std::cmp::min(bytes.len(), 16)]
+                ));
+                // Check if HLS Playlist ('#EXTM3U' signature or .m3u8 URL)
+                if bytes.starts_with(b"#EXTM3U") || url.contains(".m3u8") {
+                    let manifest_text = String::from_utf8_lossy(&bytes);
+
+                    // Parse HLS variant streams
+                    struct VariantStream {
+                        bandwidth: u32,
+                        codecs: String,
+                        uri: String,
+                    }
+                    let mut variants = Vec::new();
+                    let lines: Vec<&str> = manifest_text.lines().map(|l| l.trim()).collect();
+                    for (i, line) in lines.iter().enumerate() {
+                        if line.starts_with("#EXT-X-STREAM-INF:") {
+                            let mut bw = 0u32;
+                            let mut codecs = String::new();
+                            let inf_content = &line["#EXT-X-STREAM-INF:".len()..];
+                            for part in inf_content.split(',') {
+                                let part = part.trim();
+                                if let Some(stripped) = part.strip_prefix("BANDWIDTH=") {
+                                    let num_str: String = stripped.chars().take_while(|c| c.is_ascii_digit()).collect();
+                                    if let Ok(b) = num_str.parse::<u32>() {
+                                        bw = b;
+                                    }
+                                } else if let Some(stripped) = part.strip_prefix("CODECS=") {
+                                    codecs = stripped.trim_matches('"').to_string();
+                                }
+                            }
+                            let uri = if i + 1 < lines.len() && !lines[i + 1].starts_with('#') {
+                                lines[i + 1].to_string()
+                            } else {
+                                String::new()
+                            };
+                            variants.push(VariantStream { bandwidth: bw, codecs, uri });
+                        }
+                    }
+
+                    // Look for FLAC/Lossless stream first
+                    let flac_var = variants.iter().find(|v| {
+                        v.codecs.to_lowercase().contains("flac")
+                            || v.uri.to_lowercase().contains("lossless")
+                            || v.uri.to_lowercase().contains("flac")
+                    });
+
+                    if let Some(f) = flac_var {
+                        codec = "FLAC".to_string();
+                        sample_rate = Some(44100);
+                        bit_depth = Some(16);
+                        channels = Some(2);
+                        if f.bandwidth > 0 {
+                            bitrate = Some((f.bandwidth + 500) / 1000);
+                        } else {
+                            bitrate = Some(920);
+                        }
+                    } else if !variants.is_empty() {
+                        // Pick the highest bandwidth AAC/MP3 variant
+                        if let Some(best) = variants.iter().max_by_key(|v| v.bandwidth) {
+                            codec = if best.codecs.to_lowercase().contains("mp4a") {
+                                "AAC".to_string()
+                            } else {
+                                "MP3".to_string()
+                            };
+                            sample_rate = Some(44100);
+                            bit_depth = Some(16);
+                            channels = Some(2);
+                            if best.bandwidth > 0 {
+                                bitrate = Some((best.bandwidth + 500) / 1000);
+                            }
+                        }
+                    } else if manifest_text.contains("fLaC")
+                        || manifest_text.contains("slossless")
+                        || manifest_text.contains("lossless")
+                    {
+                        codec = "FLAC".to_string();
+                        sample_rate = Some(44100);
+                        bit_depth = Some(16);
+                        channels = Some(2);
+                        bitrate = Some(920);
+                    } else {
+                        codec = "AAC".to_string();
+                        sample_rate = Some(44100);
+                        bit_depth = Some(16);
+                        channels = Some(2);
+                        bitrate = Some(256);
+                    }
+                } else if bytes.len() >= 42 && bytes.starts_with(b"fLaC") {
+                    codec = "FLAC".to_string();
+                    let is_streaminfo = (bytes[4] & 0x7F) == 0;
+                    if is_streaminfo && bytes.len() >= 42 {
+                        let info = &bytes[8..];
+                        let b10 = info[10] as u32;
+                        let b11 = info[11] as u32;
+                        let b12 = info[12] as u32;
+                        let parsed_sr = (b10 << 12) | (b11 << 4) | (b12 >> 4);
+                        let parsed_ch = (((b12 >> 1) & 0x07) + 1) as u8;
+
+                        let b13 = info[13] as u32;
+                        let parsed_bd = ((((b12 & 0x01) << 4) | (b13 >> 4)) + 1) as u8;
+
+                        let b14 = info[14] as u64;
+                        let b15 = info[15] as u64;
+                        let b16 = info[16] as u64;
+                        let b17 = info[17] as u64;
+                        let total_samples = (((b13 & 0x0F) as u64) << 32)
+                            | (b14 << 24)
+                            | (b15 << 16)
+                            | (b16 << 8)
+                            | b17;
+
+                        if parsed_sr > 0 {
+                            sample_rate = Some(parsed_sr);
+                        }
+                        if parsed_ch > 0 {
+                            channels = Some(parsed_ch);
+                        }
+                        if parsed_bd > 0 {
+                            bit_depth = Some(parsed_bd);
+                        }
+
+                        // Calculate compressed bitrate if total size and duration are known
+                        if let (Some(total_bytes), true) = (total_size_from_range, total_samples > 0 && parsed_sr > 0) {
+                            let duration_sec = total_samples as f64 / parsed_sr as f64;
+                            if duration_sec > 1.0 {
+                                let calc_kbps = ((total_bytes as f64 * 8.0) / (duration_sec * 1000.0)).round() as u32;
+                                if calc_kbps > 200 && calc_kbps < 10000 {
+                                    bitrate = Some(calc_kbps);
+                                }
+                            }
+                        }
+                        if bitrate.is_none() && parsed_sr > 0 && parsed_bd > 0 && parsed_ch > 0 {
+                            bitrate = Some((parsed_sr * (parsed_bd as u32) * (parsed_ch as u32)) / 1000);
+                        }
+                    }
+                } else if bytes.len() >= 8 && (&bytes[4..8] == b"ftyp" || &bytes[4..8] == b"styp") {
+                    // MP4 container (fMP4 / ISO BMFF)
+                    if let Some(pos) = bytes.windows(4).position(|w| w == b"dfLa") {
+                        codec = "FLAC".to_string();
+                        let streaminfo_offset = pos + 4 + 4 + 4;
+                        if bytes.len() >= streaminfo_offset + 18 {
+                            let info = &bytes[streaminfo_offset..];
+                            let b10 = info[10] as u32;
+                            let b11 = info[11] as u32;
+                            let b12 = info[12] as u32;
+                            let parsed_sr = (b10 << 12) | (b11 << 4) | (b12 >> 4);
+                            let parsed_ch = (((b12 >> 1) & 0x07) + 1) as u8;
+                            let b13 = info[13] as u32;
+                            let parsed_bd = ((((b12 & 0x01) << 4) | (b13 >> 4)) + 1) as u8;
+
+                            if parsed_sr > 0 { sample_rate = Some(parsed_sr); }
+                            if parsed_ch > 0 { channels = Some(parsed_ch); }
+                            if parsed_bd > 0 { bit_depth = Some(parsed_bd); }
+                        }
+                        if sample_rate.is_none() { sample_rate = Some(44100); }
+                        if channels.is_none() { channels = Some(2); }
+                        if bit_depth.is_none() { bit_depth = Some(16); }
+
+                        // Check btrt box for average bitrate
+                        if let Some(bpos) = bytes.windows(4).position(|w| w == b"btrt") {
+                            if bytes.len() >= bpos + 4 + 12 {
+                                let avg_bw = u32::from_be_bytes([bytes[bpos + 12], bytes[bpos + 13], bytes[bpos + 14], bytes[bpos + 15]]);
+                                if avg_bw > 0 {
+                                    bitrate = Some((avg_bw + 500) / 1000);
+                                }
+                            }
+                        }
+                        if bitrate.is_none() {
+                            bitrate = Some(920);
+                        }
+                    } else if bytes.windows(4).any(|w| w == b"fLaC" || w == b"flac") {
+                        codec = "FLAC".to_string();
+                        bit_depth = Some(16);
+                        sample_rate = Some(44100);
+                        channels = Some(2);
+                        bitrate = Some(920);
+                    } else {
+                        codec = "AAC".to_string();
+                        bit_depth = Some(16);
+                        sample_rate = Some(44100);
+                        channels = Some(2);
+                        bitrate = Some(256);
+                    }
+                } else if bytes.len() >= 10 {
+                    codec = "MP3".to_string();
+                    bit_depth = Some(16);
+
+                    // Scan for MPEG sync word 0xFFE0
+                    for i in 0..bytes.len().saturating_sub(4) {
+                        if bytes[i] == 0xFF && (bytes[i + 1] & 0xE0) == 0xE0 {
+                            let header = u32::from_be_bytes([bytes[i], bytes[i + 1], bytes[i + 2], bytes[i + 3]]);
+                            let version = (header >> 19) & 0x03; // 3 = MPEG-1
+                            let layer = (header >> 17) & 0x03;   // 1 = Layer III (MP3)
+                            let bitrate_idx = ((header >> 12) & 0x0F) as usize;
+                            let sampling_idx = ((header >> 10) & 0x03) as usize;
+                            let channel_mode = (header >> 6) & 0x03;
+
+                            if version == 3 && layer == 1 && bitrate_idx > 0 && bitrate_idx < 15 {
+                                const MPEG1_L3_BITRATES: [u32; 15] = [0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320];
+                                const MPEG1_SAMPLERATES: [u32; 3] = [44100, 48000, 32000];
+
+                                if let Some(&br) = MPEG1_L3_BITRATES.get(bitrate_idx) {
+                                    if br > 0 {
+                                        bitrate = Some(br);
+                                    }
+                                }
+                                if let Some(&sr) = MPEG1_SAMPLERATES.get(sampling_idx) {
+                                    sample_rate = Some(sr);
+                                }
+                                channels = Some(if channel_mode == 3 { 1 } else { 2 });
+                                break;
+                            }
                         }
                     }
                 }
             }
         }
 
-        // 2. Fallback to GraphQL getStream (always works, returns CDN MP3 mid preview or high stream)
+        Self::stream_debug_log(&format!(
+            "probe result: codec={}, bitrate={:?}, sample_rate={:?}, bit_depth={:?}, channels={:?}",
+            codec, bitrate, sample_rate, bit_depth, channels
+        ));
+
+        (codec, bitrate, sample_rate, bit_depth, channels)
+    }
+
+    /// Resolves stream URL for playback via official GraphQL getStream.
+    pub async fn get_stream_url(&self, id: i64, quality: &str) -> Result<StreamInfo, AppError> {
+        let q_lower = quality.to_lowercase();
+        Self::stream_debug_log(&format!("get_stream_url called: id={}, quality={}", id, quality));
+
+        // Query official GraphQL getStream directly
+        let (quality_val, encode_val, use_hls_val) = if q_lower == "flac" {
+            (Some("hifi"), Some("wv"), true)
+        } else {
+            (None, None, false)
+        };
+
         let query = r#"
-            query getStream($ids: [ID!]!) {
-                mediaContents(ids: $ids) {
+            query getStream($ids: [ID!]!, $quality: String, $encodeType: String, $useHLSv2: Boolean!) {
+                mediaContents(ids: $ids, quality: $quality, encodeType: $encodeType) {
                     __typename
                     ... on Track {
                         stream {
+                            expire
                             high
+                            mid
+                            preview
+                        }
+                        streamV3 @include(if: $useHLSv2) {
+                            expire
+                            hls
+                        }
+                    }
+                    ... on Episode {
+                        stream {
+                            expire
+                            mid
+                        }
+                    }
+                    ... on Chapter {
+                        stream {
+                            expire
                             mid
                         }
                     }
                 }
             }
         "#;
+        let variables = serde_json::json!({
+            "ids": [id.to_string()],
+            "quality": quality_val,
+            "encodeType": encode_val,
+            "useHLSv2": use_hls_val
+        });
         let data = self
-            .graphql(query, serde_json::json!({ "ids": [id.to_string()] }))
+            .graphql_op(query, variables, Some("getStream"))
             .await?;
 
-        if let Some(stream_obj) = data
+        if let Some(track_item) = data
             .get("mediaContents")
             .and_then(|m| m.get(0))
-            .and_then(|t| t.get("stream"))
         {
-            let url_candidate = if q_lower == "high" {
+            let stream_obj = track_item.get("stream");
+            let hls_candidate = track_item
+                .get("streamV3")
+                .and_then(|v3| v3.get("hls"))
+                .and_then(|h| h.as_str());
+
+            let url_candidate = if q_lower == "flac" && hls_candidate.is_some() {
+                hls_candidate
+            } else if q_lower == "high" || q_lower == "flac" {
                 stream_obj
-                    .get("high")
+                    .and_then(|s| s.get("high"))
                     .and_then(|h| h.as_str())
-                    .or_else(|| stream_obj.get("mid").and_then(|m| m.as_str()))
+                    .or_else(|| stream_obj.and_then(|s| s.get("mid")).and_then(|m| m.as_str()))
             } else {
                 stream_obj
-                    .get("mid")
+                    .and_then(|s| s.get("mid"))
                     .and_then(|m| m.as_str())
-                    .or_else(|| stream_obj.get("high").and_then(|h| h.as_str()))
+                    .or_else(|| stream_obj.and_then(|s| s.get("high")).and_then(|h| h.as_str()))
             };
 
             if let Some(url) = url_candidate {
+                let (codec, bitrate, sample_rate, bit_depth, channels) =
+                    self.probe_stream_metadata(url).await;
+
+                let effective_quality = if codec == "FLAC" {
+                    StreamQuality::Flac
+                } else if bitrate.unwrap_or(0) >= 320 {
+                    StreamQuality::High
+                } else {
+                    StreamQuality::Mid
+                };
+
                 return Ok(StreamInfo {
                     url: url.to_string(),
-                    quality: q_enum,
-                    codec: "mp3".to_string(),
-                    bitrate: Some(128),
+                    quality: effective_quality,
+                    codec,
+                    bitrate,
                     is_drm: false,
                     license_url: None,
+                    sample_rate,
+                    bit_depth,
+                    channels,
                 });
             }
         }
@@ -766,6 +1075,103 @@ impl ZvukApiClient {
             "Аудиопоток для трека {} недоступен",
             id
         )))
+    }
+
+    const ZVUK_CIPHER_MASTER_KEY: &'static [u8] = b"T4vNqK8sR2pHcZ6mL9xWjD3yF7gBqA1t";
+    const ZVUK_SALT_CHARS: &'static [u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+
+    /// Generates a random 8-character alphanumeric salt for the keyserver X-Encrypted-Key header.
+    fn generate_key_salt() -> String {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let mut state = (now as u64) ^ 0x517cc1b727220a95;
+        (0..8)
+            .map(|i| {
+                state = state.wrapping_mul(6364136223846793005).wrapping_add(1 + (i as u64));
+                let idx = ((state >> 33) as usize) % Self::ZVUK_SALT_CHARS.len();
+                Self::ZVUK_SALT_CHARS[idx] as char
+            })
+            .collect()
+    }
+
+    fn zvuk_derive_seed(key: &[u8], salt: &[u8]) -> u64 {
+        let mut t: u64 = 0xcbf29ce484222325;
+        for &b in key.iter().chain(salt.iter()) {
+            t ^= b as u64;
+            t = t.wrapping_mul(1099511628211);
+        }
+        let mut n = t.wrapping_add(0x9e3779b97f4a7c15);
+        n ^= n >> 30;
+        n = n.wrapping_mul(0xbf58476d1ce4e5b9);
+        n ^= n >> 27;
+        n = n.wrapping_mul(0x94d049bb133111eb);
+        n ^= n >> 31;
+        n
+    }
+
+    fn zvuk_xorshift64star(mut e: u64) -> u64 {
+        e ^= e >> 12;
+        e ^= e << 25;
+        e ^= e >> 27;
+        e.wrapping_mul(0x2545f4914f6cdd1d)
+    }
+
+    /// Decrypts the 16-byte keyserver response using Zvuk's custom stream cipher.
+    pub fn decrypt_audio_key(data: &[u8], salt: &str) -> Vec<u8> {
+        let mut seed = Self::zvuk_derive_seed(Self::ZVUK_CIPHER_MASTER_KEY, salt.as_bytes());
+        let mut out = vec![0u8; data.len()];
+
+        for (e, &byte) in data.iter().enumerate() {
+            seed = Self::zvuk_xorshift64star(seed ^ (e as u64));
+            let r = ((seed >> 56) & 0xff) as u8;
+            let o = (seed & 7) as u32;
+
+            let n = byte.rotate_right(o).wrapping_sub(r);
+            out[e] = n;
+            seed ^= byte as u64;
+        }
+
+        out
+    }
+
+    /// Fetches and decrypts the 16-byte AES-128 decryption key for HLS streams via authenticated backend.
+    pub async fn fetch_audio_key(&self, url: &str, encrypted_key: Option<&str>) -> Result<Vec<u8>, AppError> {
+        let salt = match encrypted_key {
+            Some(s) if !s.trim().is_empty() => s.to_string(),
+            _ => Self::generate_key_salt(),
+        };
+
+        Self::stream_debug_log(&format!("fetch_audio_key: requesting key from {} with salt={}", url, salt));
+        
+        let mut headers = self.auth_headers().await?;
+        if let Ok(hv) = HeaderValue::from_str(&salt) {
+            headers.insert("X-Encrypted-Key", hv);
+        }
+
+        Self::stream_debug_log(&format!("fetch_audio_key: target URL {}", url));
+        let res = self.http.get(url).headers(headers).send().await?;
+        let status = res.status();
+        Self::stream_debug_log(&format!("fetch_audio_key: HTTP status {}", status));
+        if status.is_success() {
+            let bytes = res.bytes().await?;
+            Self::stream_debug_log(&format!("fetch_audio_key: received {} encrypted bytes from keyserver", bytes.len()));
+            
+            let decrypted_key = Self::decrypt_audio_key(&bytes, &salt);
+            Self::stream_debug_log(&format!(
+                "fetch_audio_key: successfully decrypted 16-byte key: {:02X?}",
+                decrypted_key.as_slice()
+            ));
+            Ok(decrypted_key)
+        } else {
+            let body = res.text().await.unwrap_or_default();
+            Self::stream_debug_log(&format!("fetch_audio_key error: status={}, body={}", status, &body[..std::cmp::min(body.len(), 200)]));
+            Err(AppError::Api {
+                status: status.as_u16(),
+                message: format!("Keyserver error {}", status),
+            })
+        }
     }
 
     // ─── Search ─────────────────────────────────────────────────────────
@@ -2647,6 +3053,234 @@ fragment PlayerTrackData on Track {
         Ok(())
     }
 
+    // ─── Dislikes / Hidden Collection ─────────────────────────────────
+
+    pub async fn get_disliked_track_ids(&self) -> Result<Vec<i64>, AppError> {
+        let gql = r#"
+            query paginatedHiddenCollectionTracksIds($first: Int!, $endCursor: String) {
+                paginatedHiddenCollection {
+                    tracks(pagination: { first: $first, after: $endCursor }) {
+                        items {
+                            id
+                        }
+                        page {
+                            hasNextPage
+                            endCursor
+                        }
+                    }
+                }
+            }
+        "#;
+
+        let mut all_ids = Vec::new();
+        let mut cursor: Option<String> = None;
+
+        for _ in 0..50 {
+            let mut variables = serde_json::json!({ "first": 100 });
+            if let Some(ref c) = cursor {
+                variables["endCursor"] = serde_json::json!(c);
+            }
+
+            let data = match self
+                .graphql_op(
+                    gql,
+                    variables,
+                    Some("paginatedHiddenCollectionTracksIds"),
+                )
+                .await
+            {
+                Ok(d) => d,
+                Err(e) => {
+                    log::warn!("[Zvuk API] get_disliked_track_ids warning: {}", e);
+                    break;
+                }
+            };
+
+            let tracks_obj = data
+                .get("paginatedHiddenCollection")
+                .and_then(|p| p.get("tracks"));
+
+            if let Some(items) = tracks_obj.and_then(|t| t.get("items")).and_then(|i| i.as_array()) {
+                for item in items {
+                    let id_val = item.get("id").unwrap_or(item);
+                    if let Some(id) = match id_val {
+                        Value::Number(n) => n.as_i64(),
+                        Value::String(s) => s.parse::<i64>().ok(),
+                        _ => None,
+                    } {
+                        all_ids.push(id);
+                    }
+                }
+            }
+
+            let page = tracks_obj.and_then(|t| t.get("page"));
+            let has_next = page
+                .and_then(|p| p.get("hasNextPage"))
+                .and_then(|h| h.as_bool())
+                .unwrap_or(false);
+
+            let next_cursor = page
+                .and_then(|p| p.get("endCursor"))
+                .and_then(|c| c.as_str())
+                .map(|s| s.to_string());
+
+            if has_next && next_cursor.is_some() {
+                cursor = next_cursor;
+            } else {
+                break;
+            }
+        }
+
+        Ok(all_ids)
+    }
+
+    pub async fn get_disliked_artist_ids(&self) -> Result<Vec<i64>, AppError> {
+        let gql = r#"
+            query paginatedHiddenCollectionArtistsIds($first: Int!, $endCursor: String) {
+                paginatedHiddenCollection {
+                    artists(pagination: { first: $first, after: $endCursor }) {
+                        items {
+                            id
+                        }
+                        page {
+                            hasNextPage
+                            endCursor
+                        }
+                    }
+                }
+            }
+        "#;
+
+        let mut all_ids = Vec::new();
+        let mut cursor: Option<String> = None;
+
+        for _ in 0..50 {
+            let mut variables = serde_json::json!({ "first": 100 });
+            if let Some(ref c) = cursor {
+                variables["endCursor"] = serde_json::json!(c);
+            }
+
+            let data = match self
+                .graphql_op(
+                    gql,
+                    variables,
+                    Some("paginatedHiddenCollectionArtistsIds"),
+                )
+                .await
+            {
+                Ok(d) => d,
+                Err(e) => {
+                    log::warn!("[Zvuk API] get_disliked_artist_ids warning: {}", e);
+                    break;
+                }
+            };
+
+            let artists_obj = data
+                .get("paginatedHiddenCollection")
+                .and_then(|p| p.get("artists"));
+
+            if let Some(items) = artists_obj.and_then(|t| t.get("items")).and_then(|i| i.as_array()) {
+                for item in items {
+                    let id_val = item.get("id").unwrap_or(item);
+                    if let Some(id) = match id_val {
+                        Value::Number(n) => n.as_i64(),
+                        Value::String(s) => s.parse::<i64>().ok(),
+                        _ => None,
+                    } {
+                        all_ids.push(id);
+                    }
+                }
+            }
+
+            let page = artists_obj.and_then(|t| t.get("page"));
+            let has_next = page
+                .and_then(|p| p.get("hasNextPage"))
+                .and_then(|h| h.as_bool())
+                .unwrap_or(false);
+
+            let next_cursor = page
+                .and_then(|p| p.get("endCursor"))
+                .and_then(|c| c.as_str())
+                .map(|s| s.to_string());
+
+            if has_next && next_cursor.is_some() {
+                cursor = next_cursor;
+            } else {
+                break;
+            }
+        }
+
+        Ok(all_ids)
+    }
+
+    pub async fn dislike_track(&self, track_id: i64) -> Result<(), AppError> {
+        let gql = r#"
+            mutation addHiddenItem($id: ID!, $type: CollectionItemType!) {
+                hiddenCollection {
+                    addItem(id: $id, type: $type)
+                }
+            }
+        "#;
+        self.graphql_op(
+            gql,
+            serde_json::json!({ "id": track_id.to_string(), "type": "TRACK" }),
+            Some("addHiddenItem"),
+        )
+        .await?;
+        Ok(())
+    }
+
+    pub async fn undislike_track(&self, track_id: i64) -> Result<(), AppError> {
+        let gql = r#"
+            mutation removeHiddenItem($id: ID!, $type: CollectionItemType!) {
+                hiddenCollection {
+                    removeItem(id: $id, type: $type)
+                }
+            }
+        "#;
+        self.graphql_op(
+            gql,
+            serde_json::json!({ "id": track_id.to_string(), "type": "TRACK" }),
+            Some("removeHiddenItem"),
+        )
+        .await?;
+        Ok(())
+    }
+
+    pub async fn dislike_artist(&self, artist_id: i64) -> Result<(), AppError> {
+        let gql = r#"
+            mutation addHiddenItem($id: ID!, $type: CollectionItemType!) {
+                hiddenCollection {
+                    addItem(id: $id, type: $type)
+                }
+            }
+        "#;
+        self.graphql_op(
+            gql,
+            serde_json::json!({ "id": artist_id.to_string(), "type": "ARTIST" }),
+            Some("addHiddenItem"),
+        )
+        .await?;
+        Ok(())
+    }
+
+    pub async fn undislike_artist(&self, artist_id: i64) -> Result<(), AppError> {
+        let gql = r#"
+            mutation removeHiddenItem($id: ID!, $type: CollectionItemType!) {
+                hiddenCollection {
+                    removeItem(id: $id, type: $type)
+                }
+            }
+        "#;
+        self.graphql_op(
+            gql,
+            serde_json::json!({ "id": artist_id.to_string(), "type": "ARTIST" }),
+            Some("removeHiddenItem"),
+        )
+        .await?;
+        Ok(())
+    }
+
     // ─── Sound Energy / Recommendations / Personal Wave ────────────────
 
     /// Fetches tracks for Personal Wave (Сила Звука).
@@ -3364,6 +3998,37 @@ fragment PlayerTrackData on Track {
 
         log::info!("[Zvuk API] Fetched {} listening history items", items.len());
         Ok(items)
+    }
+
+    /// Fetches raw text from an external URL (e.g. lyrics providers like NetEase, LRC APIs)
+    /// bypassing browser CORS limitations.
+    pub async fn fetch_proxy(
+        &self,
+        url: &str,
+        headers: Option<std::collections::HashMap<String, String>>,
+    ) -> Result<String, AppError> {
+        let mut req = self.http.get(url);
+        if let Some(h) = headers {
+            for (k, v) in h {
+                if let (Ok(hn), Ok(hv)) = (
+                    reqwest::header::HeaderName::from_bytes(k.as_bytes()),
+                    reqwest::header::HeaderValue::from_str(&v),
+                ) {
+                    req = req.header(hn, hv);
+                }
+            }
+        }
+        let res = req.send().await?;
+        let status = res.status();
+        if status.is_success() {
+            let body = res.text().await?;
+            Ok(body)
+        } else {
+            Err(AppError::Api {
+                status: status.as_u16(),
+                message: format!("HTTP request to {} failed with status {}", url, status),
+            })
+        }
     }
 }
 

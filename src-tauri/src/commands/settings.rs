@@ -33,20 +33,27 @@ pub fn apply_cache_browser_args() {
     let cache_limit_mb = get_saved_cache_limit_mb();
     let cache_limit_bytes = cache_limit_mb * 1024 * 1024;
     let js_heap_mb = cache_limit_mb.clamp(256, 1024);
-    let cache_args = format!(
-        "--disk-cache-size={} --media-cache-size={} --js-flags=--max-old-space-size={}",
+    let extra_args = format!(
+        "--disk-cache-size={} --media-cache-size={} --js-flags=--max-old-space-size={} --disable-features=AudioServiceOutOfProcess",
         cache_limit_bytes, cache_limit_bytes, js_heap_mb
     );
 
     let combined = match std::env::var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS") {
         Ok(existing) if !existing.trim().is_empty() => {
-            if !existing.contains("--disk-cache-size") {
-                format!("{} {}", existing.trim(), cache_args)
-            } else {
-                existing
+            let mut result = existing.trim().to_string();
+            if !result.contains("--disk-cache-size") {
+                result.push(' ');
+                result.push_str(&format!(
+                    "--disk-cache-size={} --media-cache-size={} --js-flags=--max-old-space-size={}",
+                    cache_limit_bytes, cache_limit_bytes, js_heap_mb
+                ));
             }
+            if !result.contains("AudioServiceOutOfProcess") {
+                result.push_str(" --disable-features=AudioServiceOutOfProcess");
+            }
+            result
         }
-        _ => cache_args,
+        _ => extra_args,
     };
     std::env::set_var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", combined);
 }

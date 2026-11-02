@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { usePlayerStore } from '../features/player/playerStore';
 import { useAppearanceSettingsStore } from '../features/settings/appearanceSettingsStore';
+import { useWindowFreezeStore, getIsWindowFrozen } from '../lib/windowFreezeStore';
 
 interface AuroraCanvasProps {
   className?: string;
@@ -194,16 +195,24 @@ export function AuroraCanvas({ className }: AuroraCanvasProps) {
     window.addEventListener('resize', resize);
     resize();
 
-    const render = (now: number) => {
-      animId = requestAnimationFrame(render);
+    let isRunning = true;
 
-      // Skip render completely if canvas is hidden or tab is in background
-      if (!canvas.offsetParent || document.hidden) {
+    const render = (now: number) => {
+      // Freeze rendering completely when window is minimized or hidden
+      if (getIsWindowFrozen() || document.hidden) {
+        isRunning = false;
         return;
       }
 
-      // 60 FPS cap to prevent running at 144Hz/240Hz
-      if (now - lastFrameTime < 16) {
+      // Skip render if canvas is temporarily hidden in DOM
+      if (!canvas.offsetParent) {
+        animId = requestAnimationFrame(render);
+        return;
+      }
+
+      // ≥75 FPS cap (11ms) to keep 75Hz+ butter-smooth while preventing runaway 240Hz/360Hz
+      if (now - lastFrameTime < 11) {
+        animId = requestAnimationFrame(render);
         return;
       }
       lastFrameTime = now;
@@ -237,11 +246,25 @@ export function AuroraCanvas({ className }: AuroraCanvasProps) {
 
         gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
       }
+
+      animId = requestAnimationFrame(render);
     };
 
     animId = requestAnimationFrame(render);
 
+    const unsub = useWindowFreezeStore.subscribe((state, prev) => {
+      if (!state.isFrozen && prev.isFrozen) {
+        if (!isRunning && gl && canvas) {
+          isRunning = true;
+          lastTime = performance.now();
+          lastFrameTime = performance.now();
+          animId = requestAnimationFrame(render);
+        }
+      }
+    });
+
     return () => {
+      unsub();
       cancelAnimationFrame(animId);
       window.removeEventListener('resize', resize);
       if (gl) {
@@ -267,11 +290,16 @@ function fallbackRender2D(canvas: HTMLCanvasElement, getIsPlaying: () => boolean
   let animId: number;
   let lastFrame = 0;
   let t = 0;
+  let isRunning = true;
 
   const render2D = (now: number) => {
-    animId = requestAnimationFrame(render2D);
+    if (getIsWindowFrozen() || document.hidden) {
+      isRunning = false;
+      return;
+    }
 
-    if (!canvas.offsetParent || document.hidden || now - lastFrame < 33) {
+    if (!canvas.offsetParent || now - lastFrame < 33) {
+      animId = requestAnimationFrame(render2D);
       return;
     }
     lastFrame = now;
@@ -287,8 +315,23 @@ function fallbackRender2D(canvas: HTMLCanvasElement, getIsPlaying: () => boolean
     grad.addColorStop(1, 'rgba(112, 220, 85, 0)');
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, w, h);
+
+    animId = requestAnimationFrame(render2D);
   };
 
   animId = requestAnimationFrame(render2D);
-  return () => cancelAnimationFrame(animId);
+
+  const unsub = useWindowFreezeStore.subscribe((state, prev) => {
+    if (!state.isFrozen && prev.isFrozen) {
+      if (!isRunning) {
+        isRunning = true;
+        animId = requestAnimationFrame(render2D);
+      }
+    }
+  });
+
+  return () => {
+    unsub();
+    cancelAnimationFrame(animId);
+  };
 }

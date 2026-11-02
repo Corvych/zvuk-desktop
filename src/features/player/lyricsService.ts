@@ -1,4 +1,4 @@
-import { getLyrics, type Track } from '../../api';
+import { getLyrics, fetchProxy, type Track } from '../../api';
 import { useLyricsSettingsStore } from '../settings/lyricsSettingsStore';
 
 export interface ResolvedLyrics {
@@ -19,6 +19,25 @@ function cleanTitleForSearch(title: string): string {
     .trim();
 }
 
+async function fetchProxyJson<T>(url: string, headers?: Record<string, string>): Promise<T | null> {
+  try {
+    const raw = await fetchProxy(url, headers);
+    return JSON.parse(raw) as T;
+  } catch {
+    return null;
+  }
+}
+
+async function fetchWithTimeout(url: string, ms = 5000): Promise<Response> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), ms);
+  try {
+    return await fetch(url, { signal: ctrl.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function fetchLrclibLyrics(track: Track): Promise<ResolvedLyrics | null> {
   try {
     const artist = track.artist.trim();
@@ -35,12 +54,12 @@ export async function fetchLrclibLyrics(track: Track): Promise<ResolvedLyrics | 
       url += `&album_name=${encodeURIComponent(track.album.trim())}`;
     }
 
-    let res = await fetch(url);
+    let res = await fetchWithTimeout(url);
 
     // If 404 with duration & album, retry with just title and artist
     if (!res.ok && res.status === 404 && (durationSec > 0 || track.album)) {
       const fallbackUrl = `https://lrclib.net/api/get?track_name=${encodeURIComponent(cleanedTitle || title)}&artist_name=${encodeURIComponent(artist)}`;
-      res = await fetch(fallbackUrl);
+      res = await fetchWithTimeout(fallbackUrl);
     }
 
     if (res.ok) {
@@ -72,7 +91,7 @@ export async function fetchLrclibLyrics(track: Track): Promise<ResolvedLyrics | 
 
     for (const query of searchQueries) {
       const searchUrl = `https://lrclib.net/api/search?q=${encodeURIComponent(query)}`;
-      const searchRes = await fetch(searchUrl);
+      const searchRes = await fetchWithTimeout(searchUrl);
 
       if (searchRes.ok) {
         const items = await searchRes.json();
@@ -157,14 +176,14 @@ export async function fetchNeteaseLyrics(track: Track): Promise<ResolvedLyrics |
     ];
 
     let foundSongId: number | null = null;
+    const neteaseHeaders = {
+      Referer: 'https://music.163.com',
+    };
 
     for (const q of queries) {
       const searchUrl = `https://music.163.com/api/cloudsearch/pc?s=${encodeURIComponent(q)}&type=1&offset=0&limit=5`;
-      const sRes = await fetch(searchUrl);
-      if (!sRes.ok) continue;
-
-      const sData = await sRes.json();
-      const songs = sData.result?.songs;
+      const sData = await fetchProxyJson<any>(searchUrl, neteaseHeaders);
+      const songs = sData?.result?.songs;
       if (Array.isArray(songs) && songs.length > 0) {
         let best = songs[0];
         if (durationSec > 0) {
@@ -185,33 +204,56 @@ export async function fetchNeteaseLyrics(track: Track): Promise<ResolvedLyrics |
     if (!foundSongId) return null;
 
     const lyricUrl = `https://music.163.com/api/song/lyric?id=${foundSongId}&lv=1&kv=1&tv=1&yv=1`;
-    const lRes = await fetch(lyricUrl);
-    if (!lRes.ok) return null;
-
-    const lData = await lRes.json();
+    const lData = await fetchProxyJson<any>(lyricUrl, neteaseHeaders);
+    if (!lData) return null;
 
     // 1. Prefer YRC (Word/Syllable sync Enhanced Karaoke)
-    if (lData.yrc?.lyric && lData.yrc.lyric.trim()) {
-      return {
-        lyrics: lData.yrc.lyric,
-        is_synced: true,
-        has_word_sync: true,
-        format: 'yrc',
-        source: 'netease',
-        sourceLabel: 'NetEase (Word-Sync)',
-      };
+    if (lData.yrc?.lyric && typeof lData.yrc.lyric === 'string') {
+      const trimmedYrc = lData.yrc.lyric.trim();
+      const hasActualYrcWords =
+        /\(\d+,\d+,\d+\)/.test(trimmedYrc) ||
+        /"tx"\s*:|"c"\s*:/.test(trimmedYrc);
+
+      if (hasActualYrcWords) {
+        return {
+          lyrics: trimmedYrc,
+          is_synced: true,
+          has_word_sync: true,
+          format: 'yrc',
+          source: 'netease',
+          sourceLabel: 'NetEase',
+        };
+      }
     }
 
-    // 2. Standard LRC
-    if (lData.lrc?.lyric && lData.lrc.lyric.trim()) {
-      return {
-        lyrics: lData.lrc.lyric,
-        is_synced: true,
-        has_word_sync: false,
-        format: 'lrc',
-        source: 'netease',
-        sourceLabel: 'NetEase',
-      };
+    // 2. Check KLYRIC (Karaoke LRC with syllable tags <mm:ss.xx>)
+    if (lData.klyric?.lyric && typeof lData.klyric.lyric === 'string') {
+      const trimmedKlyric = lData.klyric.lyric.trim();
+      if (trimmedKlyric && trimmedKlyric.includes('<')) {
+        return {
+          lyrics: trimmedKlyric,
+          is_synced: true,
+          has_word_sync: true,
+          format: 'lrc',
+          source: 'netease',
+          sourceLabel: 'NetEase',
+        };
+      }
+    }
+
+    // 3. Standard LRC
+    if (lData.lrc?.lyric && typeof lData.lrc.lyric === 'string') {
+      const trimmedLrc = lData.lrc.lyric.trim();
+      if (trimmedLrc) {
+        return {
+          lyrics: trimmedLrc,
+          is_synced: true,
+          has_word_sync: false,
+          format: 'lrc',
+          source: 'netease',
+          sourceLabel: 'NetEase',
+        };
+      }
     }
   } catch (err) {
     console.warn('[LyricsService] NetEase fetch failed:', err);
@@ -226,10 +268,6 @@ export async function fetchBetterLyrics(track: Track): Promise<ResolvedLyrics | 
     const cleanedTitle = cleanTitleForSearch(title);
     const durationSec = Math.round(track.duration);
 
-    // 1. Exact query by track & artist
-    const queryUrl = `https://lrc.red/api/v1?track=${encodeURIComponent(cleanedTitle || title)}&artist=${encodeURIComponent(artist)}`;
-    let res = await fetch(queryUrl);
-
     interface LrcRedItem {
       id: string;
       track_name: string;
@@ -243,20 +281,16 @@ export async function fetchBetterLyrics(track: Track): Promise<ResolvedLyrics | 
       results?: LrcRedItem[];
     }
 
-    let data: LrcRedResponse | null = null;
-    if (res.ok) {
-      data = await res.json();
-    }
+    // 1. Exact query by track & artist
+    const queryUrl = `https://lrc.red/api/v1?track=${encodeURIComponent(cleanedTitle || title)}&artist=${encodeURIComponent(artist)}`;
+    let data = await fetchProxyJson<LrcRedResponse>(queryUrl);
 
     // 2. Fallback query by general string search if no results
     if (!data?.results || data.results.length === 0) {
       const primaryArtist = artist.split(/[,&/]|feat\.|ft\./i)[0].trim();
       const fallbackQuery = `${cleanedTitle || title} ${primaryArtist || artist}`;
       const searchUrl = `https://lrc.red/api/v1?q=${encodeURIComponent(fallbackQuery)}`;
-      const sRes = await fetch(searchUrl);
-      if (sRes.ok) {
-        data = await sRes.json();
-      }
+      data = await fetchProxyJson<LrcRedResponse>(searchUrl);
     }
 
     const items = data?.results;
@@ -285,10 +319,7 @@ export async function fetchBetterLyrics(track: Track): Promise<ResolvedLyrics | 
     if (!bestItem?.lyricsUrl) return null;
 
     // Fetch the TTML / LRC content
-    const lyricsRes = await fetch(bestItem.lyricsUrl);
-    if (!lyricsRes.ok) return null;
-
-    const lyricsText = await lyricsRes.text();
+    const lyricsText = await fetchProxy(bestItem.lyricsUrl).catch(() => null);
     if (!lyricsText || !lyricsText.trim()) return null;
 
     const isWordSync = bestItem.timing_type === 'word' || lyricsText.includes('<span begin=');
@@ -299,12 +330,30 @@ export async function fetchBetterLyrics(track: Track): Promise<ResolvedLyrics | 
       has_word_sync: isWordSync,
       format: lyricsText.includes('<tt') ? 'ttml' : 'lrc',
       source: 'betterlyrics',
-      sourceLabel: isWordSync ? 'Better Lyrics (Word-Sync)' : 'Better Lyrics',
+      sourceLabel: 'Better Lyrics',
     };
   } catch (err) {
     console.warn('[LyricsService] Better Lyrics fetch failed:', err);
   }
   return null;
+}
+
+const MAX_CACHED_TRACKS = 30;
+
+function evictOldestIfNeeded(cache: Map<unknown, unknown>) {
+  while (cache.size > MAX_CACHED_TRACKS) {
+    const firstKey = cache.keys().next().value;
+    if (firstKey !== undefined) {
+      cache.delete(firstKey);
+    } else {
+      break;
+    }
+  }
+}
+
+function setCacheEntry<K, V>(cache: Map<K, V>, key: K, value: V) {
+  cache.set(key, value);
+  evictOldestIfNeeded(cache as Map<unknown, unknown>);
 }
 
 const trackSourceLyricsCache = new Map<string, ResolvedLyrics | null>();
@@ -373,7 +422,7 @@ export async function fetchLyricsBySource(
     result = await fetchLrclibLyrics(track);
   }
 
-  trackSourceLyricsCache.set(cacheKey, result);
+  setCacheEntry(trackSourceLyricsCache, cacheKey, result);
   return result;
 }
 
@@ -462,7 +511,7 @@ export async function probeAllSources(
     })
   );
 
-  trackProbedSourcesCache.set(track.id, results);
+  setCacheEntry(trackProbedSourcesCache, track.id, results);
   return results;
 }
 
@@ -485,7 +534,7 @@ export async function fetchUnifiedLyrics(
   } = useLyricsSettingsStore.getState();
 
   if (!enableZvuk && !enableBetterLyrics && !enableNetease && !enableLrclib) {
-    trackUnifiedLyricsCache.set(cacheKey, null);
+    setCacheEntry(trackUnifiedLyricsCache, cacheKey, null);
     return null;
   }
 
@@ -494,7 +543,7 @@ export async function fetchUnifiedLyrics(
   // 1. Explicit manual source selection (e.g. user clicked source switcher in HUD)
   if (preferredSource) {
     finalResult = await fetchLyricsBySource(track, preferredSource);
-    trackUnifiedLyricsCache.set(cacheKey, finalResult);
+    setCacheEntry(trackUnifiedLyricsCache, cacheKey, finalResult);
     return finalResult;
   }
 
@@ -511,7 +560,7 @@ export async function fetchUnifiedLyrics(
       const wsLyrics = await fetchLyricsBySource(track, wsSource);
       if (wsLyrics && wsLyrics.has_word_sync) {
         finalResult = wsLyrics;
-        trackUnifiedLyricsCache.set(cacheKey, finalResult);
+        setCacheEntry(trackUnifiedLyricsCache, cacheKey, finalResult);
         return finalResult;
       }
     }
@@ -530,7 +579,7 @@ export async function fetchUnifiedLyrics(
     if (candidate) {
       if (candidate.is_synced) {
         finalResult = candidate;
-        trackUnifiedLyricsCache.set(cacheKey, finalResult);
+        setCacheEntry(trackUnifiedLyricsCache, cacheKey, finalResult);
         return finalResult;
       }
       if (!firstPlainFallback) {
@@ -540,7 +589,7 @@ export async function fetchUnifiedLyrics(
   }
 
   finalResult = firstPlainFallback;
-  trackUnifiedLyricsCache.set(cacheKey, finalResult);
+  setCacheEntry(trackUnifiedLyricsCache, cacheKey, finalResult);
   return finalResult;
 }
 

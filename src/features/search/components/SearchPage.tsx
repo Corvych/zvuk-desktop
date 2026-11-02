@@ -6,6 +6,7 @@ import { useFavouritesStore } from '../../favourites/favouritesStore';
 import { formatTime } from '../../../lib/formatters';
 import { ArtistLinks } from '../../../components/ArtistLinks';
 import { LikeButton } from '../../../components/LikeButton';
+import { CrystalIcon } from '../../../components/CrystalIcon';
 
 
 export function SearchPage() {
@@ -163,8 +164,14 @@ export function SearchPage() {
                             </div>
                           )}
                           <div>
-                            <div style={{ fontSize: '14px', fontWeight: 500, color: isCurrent ? 'var(--accent-light)' : 'var(--text-primary)' }}>
-                              {track.title}
+                            <div style={{ fontSize: '14px', fontWeight: 500, color: isCurrent ? 'var(--accent-light)' : 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                              <span>{track.title}</span>
+                              {track.is_explicit && (
+                                <span className="track-badge-e" title="Explicit">E</span>
+                              )}
+                              {track.has_flac && (
+                                <span className="track-badge-hifi" title="HiFi Audio (Lossless)"><CrystalIcon size={13} /></span>
+                              )}
                             </div>
                             <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
                               <ArtistLinks

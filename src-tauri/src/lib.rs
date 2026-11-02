@@ -43,6 +43,7 @@ pub fn run() {
         .manage(AppState::new())
         .setup(|app| {
             if let Some(window) = app.get_webview_window("main") {
+                #[cfg(not(windows))]
                 if let Some(icon) = app.default_window_icon() {
                     let _ = window.set_icon(icon.clone());
                 }
@@ -72,10 +73,8 @@ pub fn run() {
                         .unwrap_or_else(|_| std::env::temp_dir())
                         .join("Zvuk Desktop");
                     let _ = std::fs::create_dir_all(&base_dir);
-                    let icon_path = base_dir.join("app_icon.png");
-                    if !icon_path.exists() || icon_path.metadata().map(|m| m.len()).unwrap_or(0) == 0 {
-                        let _ = std::fs::write(&icon_path, include_bytes!("../icons/icon.png"));
-                    }
+                    let icon_path = base_dir.join("app_icon.ico");
+                    let _ = std::fs::write(&icon_path, include_bytes!("../icons/icon.ico"));
                     if icon_path.exists() {
                         let _ = std::process::Command::new("reg")
                             .creation_flags(CREATE_NO_WINDOW)
@@ -84,6 +83,20 @@ pub fn run() {
                                 "HKCU\\Software\\Classes\\AppUserModelId\\com.corvych.zvuk-desktop",
                                 "/v",
                                 "IconUri",
+                                "/t",
+                                "REG_SZ",
+                                "/d",
+                                &icon_path.to_string_lossy(),
+                                "/f",
+                            ])
+                            .spawn();
+                        let _ = std::process::Command::new("reg")
+                            .creation_flags(CREATE_NO_WINDOW)
+                            .args([
+                                "add",
+                                "HKCU\\Software\\Classes\\AppUserModelId\\com.corvych.zvuk-desktop",
+                                "/v",
+                                "IconPath",
                                 "/t",
                                 "REG_SZ",
                                 "/d",
@@ -115,6 +128,7 @@ pub fn run() {
             commands::auth::check_auth_status,
             commands::auth::get_subscription,
             commands::auth::logout,
+            commands::auth::reset_sber_id_session,
             // Tracks & Artists
             commands::tracks::get_track,
             commands::tracks::get_tracks_by_ids,
@@ -123,6 +137,8 @@ pub fn run() {
             commands::tracks::get_artist_releases,
             commands::tracks::get_stream_url,
             commands::tracks::get_lyrics,
+            commands::tracks::fetch_audio_key,
+            commands::tracks::fetch_proxy,
 
             // Search
             commands::search::search,
@@ -150,6 +166,12 @@ pub fn run() {
             commands::favourites::get_liked_artist_ids,
             commands::favourites::like_artist,
             commands::favourites::unlike_artist,
+            commands::favourites::get_disliked_track_ids,
+            commands::favourites::get_disliked_artist_ids,
+            commands::favourites::dislike_track,
+            commands::favourites::undislike_track,
+            commands::favourites::dislike_artist,
+            commands::favourites::undislike_artist,
             // Recommendations / Sound Energy / Personal Wave
             commands::recommendations::get_personal_wave,
             commands::recommendations::get_artist_radio,

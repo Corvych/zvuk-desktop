@@ -105,6 +105,17 @@ export const useFavouritesStore = create<FavouritesState>((set, get) => ({
       return { likedTrackIds: next };
     });
 
+    if (nextState) {
+      try {
+        const { useDislikesStore } = await import('../dislikes/dislikesStore');
+        if (useDislikesStore.getState().isDisliked(numId)) {
+          void useDislikesStore.getState().toggleDislikeTrack(numId, { skipCurrent: false });
+        }
+      } catch {
+        // ignore
+      }
+    }
+
     try {
       if (nextState) {
         await likeTrack(numId);

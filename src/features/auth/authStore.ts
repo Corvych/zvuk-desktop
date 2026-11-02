@@ -28,6 +28,7 @@ interface AuthState {
   startSberIdLogin: () => Promise<void>;
   startBrowserLogin: () => Promise<void>;
   logout: () => Promise<void>;
+  resetSberIdAndSwitchAccount: () => Promise<void>;
   continueAsGuest: () => void;
   openLoginModal: () => void;
   closeLoginModal: () => void;
@@ -112,6 +113,25 @@ export const useAuthStore = create<AuthState>((set) => ({
       // Ignore logout errors
     }
     set({ user: null, isAuthenticated: false, error: null });
+  },
+
+  resetSberIdAndSwitchAccount: async () => {
+    try {
+      await api.resetSberIdSession();
+    } catch {
+      // Ignore
+    }
+    set({ user: null, isAuthenticated: false, error: null, showLoginModal: false });
+    try {
+      set({ isSberIdOpening: true });
+      await api.openSberIdLogin();
+    } catch (err) {
+      set({
+        error: `Не удалось открыть окно входа: ${err instanceof Error ? err.message : String(err)}`,
+      });
+    } finally {
+      set({ isSberIdOpening: false });
+    }
   },
 
   clearError: () => set({ error: null }),

@@ -15,7 +15,7 @@ type SettingsTab = 'profile' | 'playback' | 'appearance' | 'integrations' | 'abo
 const VALID_TABS: SettingsTab[] = ['profile', 'playback', 'appearance', 'integrations', 'about'];
 
 const QUALITY_OPTIONS: { label: string; description: string; value: AudioQuality }[] = [
-  { label: 'HiFi (FLAC)', description: 'Без потерь, ~1411 кбит/с', value: 'flac' },
+  { label: 'HiFi (FLAC)', description: 'Без потерь', value: 'flac' },
   { label: 'HQ (Высокое)', description: 'MP3 320 кбит/с', value: 'high' },
   { label: 'SQ (Среднее)', description: 'MP3 192 кбит/с', value: 'mid' },
 ];
@@ -81,7 +81,7 @@ export function SettingsPage() {
     setSearchParams({ tab }, { replace: true });
   };
 
-  const { user, logout } = useAuthStore();
+  const { user, logout, resetSberIdAndSwitchAccount, openLoginModal } = useAuthStore();
   const { quality, setQuality } = usePlayerStore();
   const {
     enableZvuk,
@@ -409,9 +409,19 @@ export function SettingsPage() {
                       )}
                     </div>
                   </div>
-                  <button className="btn btn--secondary" onClick={logout}>
-                    Выйти из аккаунта
-                  </button>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                    <button className="btn btn--secondary" onClick={logout}>
+                      Выйти из аккаунта
+                    </button>
+                    <button
+                      className="btn btn--secondary"
+                      onClick={resetSberIdAndSwitchAccount}
+                      title="Выйти и открыть чистое окно Сбер ID для входа под другим аккаунтом"
+                      style={{ borderColor: 'rgba(33, 160, 56, 0.4)', color: 'var(--text-primary)' }}
+                    >
+                      Сменить Сбер ID
+                    </button>
+                  </div>
                 </div>
 
                 {/* SberPrime Subscription Card */}
@@ -515,7 +525,21 @@ export function SettingsPage() {
                 </div>
               </div>
             ) : (
-              <p style={{ color: 'var(--text-muted)' }}>Не авторизован</p>
+              <div>
+                <p style={{ color: 'var(--text-muted)', marginBottom: '14px' }}>Вы не авторизованы в сервисе Звук.</p>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                  <button className="btn btn--primary" onClick={openLoginModal}>
+                    Войти в аккаунт
+                  </button>
+                  <button
+                    className="btn btn--secondary"
+                    onClick={resetSberIdAndSwitchAccount}
+                    title="Сбросить сохраненные куки Сбер ID и открыть чистое окно входа для выбора аккаунта"
+                  >
+                    Сменить / Сбросить сессию Сбер ID
+                  </button>
+                </div>
+              </div>
             )}
           </section>
         </div>

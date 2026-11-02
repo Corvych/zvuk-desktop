@@ -207,6 +207,12 @@ pub struct StreamInfo {
     pub bitrate: Option<u32>,
     pub is_drm: bool,
     pub license_url: Option<String>,
+    #[serde(default)]
+    pub sample_rate: Option<u32>,
+    #[serde(default)]
+    pub bit_depth: Option<u8>,
+    #[serde(default)]
+    pub channels: Option<u8>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { usePlayerStore, type AudioQuality } from '../playerStore';
 import { useFavouritesStore } from '../../favourites/favouritesStore';
@@ -7,14 +7,19 @@ import { formatTime } from '../../../lib/formatters';
 import { showToast } from '../../../components/Toast';
 import { ArtistLinks } from '../../../components/ArtistLinks';
 import { LikeButton } from '../../../components/LikeButton';
+import { DislikeButton } from '../../../components/DislikeButton';
+import { DislikeIcon } from '../../../components/DislikeIcon';
+import { useDislikesStore } from '../../dislikes/dislikesStore';
 import { ShareIcon } from '../../../components/ShareIcon';
 import { fetchUnifiedLyrics, probeAllSources } from '../lyricsService';
 import { useVolumeWheel } from '../useVolumeWheel';
 import { usePlaylistModalStore } from '../../playlists/playlistModalStore';
+import { getAudioQualityDetails } from '../../../lib/audioQuality';
+import { CrystalIcon } from '../../../components/CrystalIcon';
 
 
 const QUALITY_LIST: { id: AudioQuality; badge: string; label: string; desc: string }[] = [
-  { id: 'flac', badge: 'HiFi', label: 'HiFi', desc: 'Без потерь • FLAC ~1411 кбит/с' },
+  { id: 'flac', badge: 'HiFi', label: 'HiFi', desc: 'Без потерь • FLAC до 1411 кбит/с' },
   { id: 'high', badge: 'HQ', label: 'HQ', desc: 'Высокое • MP3 320 кбит/с' },
   { id: 'mid', badge: 'SQ', label: 'SQ', desc: 'Стандартное • MP3 192 кбит/с' },
 ];
@@ -40,6 +45,9 @@ export function PlayerBar() {
     toggleShuffle,
     cycleRepeat,
     openFullscreenPlayer,
+    streamInfo,
+    sidePanelTab,
+    toggleSidePanel,
   } = usePlayerStore();
 
   const navigate = useNavigate();
@@ -48,6 +56,7 @@ export function PlayerBar() {
   const qualityMenuRef = useRef<HTMLDivElement>(null);
   const moreMenuRef = useRef<HTMLDivElement>(null);
   const volumeControlRef = useVolumeWheel();
+  const audioDetails = useMemo(() => getAudioQualityDetails(streamInfo, quality), [streamInfo, quality]);
 
   useEffect(() => {
     if (!showQualityMenu && !isMoreMenuOpen) return;
@@ -85,6 +94,8 @@ export function PlayerBar() {
 
   const isLiked = useFavouritesStore((s) => s.isLiked(currentTrack?.id));
   const toggleLikeTrack = useFavouritesStore((s) => s.toggleLikeTrack);
+  const isDisliked = useDislikesStore((s) => s.isDisliked(currentTrack?.id));
+  const toggleDislikeTrack = useDislikesStore((s) => s.toggleDislikeTrack);
 
   const progressPercent = duration > 0 ? (progress / duration) * 100 : 0;
 
@@ -132,6 +143,17 @@ export function PlayerBar() {
                   artistName={currentTrack.artist}
                 />
               </div>
+              <div
+                className="player-bar__quality"
+                onClick={() => setShowQualityMenu((prev) => !prev)}
+                title={`Качество звука: ${audioDetails.fullSummary}`}
+              >
+                <span className="player-bar__quality-meta">
+                  {audioDetails.codec === 'FLAC'
+                    ? `${audioDetails.bitDepthText} / ${audioDetails.sampleRateText} • ${audioDetails.bitrateText}`
+                    : `${audioDetails.bitrateText} • ${audioDetails.sampleRateText}`}
+                </span>
+              </div>
             </div>
 
 
@@ -139,6 +161,13 @@ export function PlayerBar() {
               isLiked={!!isLiked}
               onToggle={() => currentTrack && toggleLikeTrack(currentTrack.id)}
               title={isLiked ? 'Удалить из любимых (L)' : 'Добавить в любимое (L)'}
+              size={18}
+            />
+
+            <DislikeButton
+              isDisliked={!!isDisliked}
+              onToggle={() => currentTrack && toggleDislikeTrack(currentTrack.id)}
+              title={isDisliked ? 'Снять отметку «Не нравится» (D)' : 'Не нравится / Скрыть (D)'}
               size={18}
             />
 
@@ -238,6 +267,16 @@ export function PlayerBar() {
                       Перейти к альбому
                     </button>
                   )}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsMoreMenuOpen(false);
+                      toggleDislikeTrack(currentTrack.id);
+                    }}
+                  >
+                    <DislikeIcon size={16} active={isDisliked} />
+                    {isDisliked ? 'Снять отметку «Не нравится»' : 'Не рекомендовать трек'}
+                  </button>
                 </div>
               )}
             </div>
@@ -326,15 +365,22 @@ export function PlayerBar() {
           <button
             type="button"
             className={`quality-badge-btn quality-badge-btn--${
-              quality === 'flac' ? 'hifi' : quality === 'high' ? 'hq' : 'sq'
+              audioDetails.isHiRes
+                ? 'hires'
+                : audioDetails.badgeLabel === 'HiFi'
+                ? 'hifi'
+                : audioDetails.badgeLabel === 'HQ'
+                ? 'hq'
+                : 'sq'
             } ${showQualityMenu ? 'quality-badge-btn--active' : ''}`}
             onClick={() => setShowQualityMenu((prev) => !prev)}
-            title={`Качество звука: ${
-              quality === 'flac' ? 'HiFi (Без потерь)' : quality === 'high' ? 'HQ (Высокое)' : 'SQ (Стандартное)'
-            }`}
+            title={`Качество звука: ${audioDetails.fullSummary}`}
             aria-label="Выбор качества звука"
           >
-            {quality === 'flac' ? 'HiFi' : quality === 'high' ? 'HQ' : 'SQ'}
+            {audioDetails.badgeLabel}
+            {audioDetails.badgeLabel === 'HiFi' && (
+              <CrystalIcon size={10} className="quality-badge__crystal" />
+            )}
           </button>
 
           {showQualityMenu && (
@@ -362,6 +408,9 @@ export function PlayerBar() {
                         }`}
                       >
                         {item.badge}
+                        {item.badge === 'HiFi' && (
+                          <CrystalIcon size={10} className="quality-badge__crystal" />
+                        )}
                       </span>
                       <div className="quality-menu__info">
                         <div className="quality-menu__label">{item.label}</div>
@@ -437,8 +486,8 @@ export function PlayerBar() {
 
         {/* Lyrics, Queue, Fullscreen Buttons */}
         <button
-          className="player-bar__btn"
-          onClick={() => openFullscreenPlayer('lyrics')}
+          className={`player-bar__btn ${sidePanelTab === 'lyrics' ? 'player-bar__btn--active' : ''}`}
+          onClick={() => toggleSidePanel('lyrics')}
           title="Текст песни"
         >
           <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -450,8 +499,8 @@ export function PlayerBar() {
         </button>
 
         <button
-          className="player-bar__btn"
-          onClick={() => openFullscreenPlayer('queue')}
+          className={`player-bar__btn ${sidePanelTab === 'queue' ? 'player-bar__btn--active' : ''}`}
+          onClick={() => toggleSidePanel('queue')}
           title="Очередь воспроизведения"
         >
           <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

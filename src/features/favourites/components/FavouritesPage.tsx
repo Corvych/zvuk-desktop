@@ -7,6 +7,7 @@ import { formatTime, pluralizeTracks } from '../../../lib/formatters';
 import { ArtistLinks } from '../../../components/ArtistLinks';
 import { extractMonetFromImage, type MonetTheme } from '../../../lib/monetPalette';
 import { LikeButton } from '../../../components/LikeButton';
+import { CrystalIcon } from '../../../components/CrystalIcon';
 import { usePlaylistModalStore } from '../../playlists/playlistModalStore';
 
 type Tab = 'tracks' | 'albums';
@@ -706,7 +707,7 @@ export function FavouritesPage() {
                             <span className="track-badge-e" title="Explicit">E</span>
                           )}
                           {track.has_flac && (
-                            <span className="track-badge-hifi" title="HiFi Audio">HiFi</span>
+                            <span className="track-badge-hifi" title="HiFi Audio (Lossless)"><CrystalIcon size={13} /></span>
                           )}
                         </div>
                         <div className="favorites-table__track-artists">

@@ -1,7 +1,8 @@
 import { useEffect } from 'react';
 import { usePlayerStore } from './playerStore';
-import { getAnalyser, getOrCreateAudio } from './audioService';
+import { sampleByteFrequencyData } from './audioService';
 import { useAppearanceSettingsStore } from '../settings/appearanceSettingsStore';
+import { useWindowFreezeStore, getIsWindowFrozen } from '../../lib/windowFreezeStore';
 
 export function useAudioReactive(targetRef?: React.RefObject<HTMLElement | null>) {
   const isPlaying = usePlayerStore((s) => s.isPlaying);
@@ -32,6 +33,7 @@ export function useAudioReactive(targetRef?: React.RefObject<HTMLElement | null>
     }
 
     let animId: number;
+    let isRunning = true;
     const dataArray = new Uint8Array(32);
     let smoothedBass = 0;
     let smoothedMid = 0;
@@ -39,21 +41,20 @@ export function useAudioReactive(targetRef?: React.RefObject<HTMLElement | null>
     let smoothedEnergy = 0;
     let lastUpdate = 0;
 
-    const audio = getOrCreateAudio();
-
     const tick = (now: number) => {
-      animId = requestAnimationFrame(tick);
+      // Freeze processing and DOM variable writes completely when window is minimized or hidden
+      if (getIsWindowFrozen() || document.hidden) {
+        isRunning = false;
+        return;
+      }
 
-      // Throttling to ~35 FPS to dramatically reduce style recalculations and GPU load
-      if (now - lastUpdate < 28) {
+      // Throttling to ≥75 FPS (~11ms when focused, or ~8 FPS when window has no focus) for silky smooth audio-reactive glow and physics
+      const throttleMs = document.hasFocus() ? 11 : 120;
+      if (now - lastUpdate < throttleMs) {
+        animId = requestAnimationFrame(tick);
         return;
       }
       lastUpdate = now;
-
-      // Skip processing when app window or tab is hidden
-      if (document.hidden) {
-        return;
-      }
 
       if (!isPlaying) {
         // Smoothly decay to calm resting aura
@@ -76,52 +77,50 @@ export function useAudioReactive(targetRef?: React.RefObject<HTMLElement | null>
         setProps('--audio-bar-1', '4px');
         setProps('--audio-bar-2', '4px');
         setProps('--audio-bar-3', '4px');
+        animId = requestAnimationFrame(tick);
         return;
       }
 
-      const analyser = getAnalyser();
       let hasRealAudio = false;
 
-      if (analyser) {
-        analyser.getByteFrequencyData(dataArray);
+      if (sampleByteFrequencyData(dataArray)) {
         let sum = 0;
         for (let i = 0; i < 16; i++) {
           sum += dataArray[i];
         }
-        if (sum > 0) {
+
+        // Noise gate: only respond when there is actual audible signal (silence is truly silent)
+        if (sum > 4) {
           hasRealAudio = true;
           const rawBass = (dataArray[0] + dataArray[1] + dataArray[2] + dataArray[3]) / (4 * 255);
           const rawMid = (dataArray[4] + dataArray[5] + dataArray[6] + dataArray[7] + dataArray[8]) / (5 * 255);
           const rawTreble = (dataArray[9] + dataArray[10] + dataArray[11] + dataArray[12]) / (4 * 255);
           const rawEnergy = rawBass * 0.5 + rawMid * 0.35 + rawTreble * 0.15;
 
-          // Smooth exponential lerp
-          smoothedBass += (rawBass - smoothedBass) * 0.26;
-          smoothedMid += (rawMid - smoothedMid) * 0.22;
-          smoothedTreble += (rawTreble - smoothedTreble) * 0.28;
-          smoothedEnergy += (rawEnergy - smoothedEnergy) * 0.24;
+          // Asymmetric attack/decay: snappy attack on beats, smooth musical release
+          const bSpeed = rawBass > smoothedBass ? 0.28 : 0.14;
+          const mSpeed = rawMid > smoothedMid ? 0.24 : 0.12;
+          const tSpeed = rawTreble > smoothedTreble ? 0.24 : 0.14;
+          const eSpeed = rawEnergy > smoothedEnergy ? 0.26 : 0.12;
+
+          smoothedBass += (rawBass - smoothedBass) * bSpeed;
+          smoothedMid += (rawMid - smoothedMid) * mSpeed;
+          smoothedTreble += (rawTreble - smoothedTreble) * tSpeed;
+          smoothedEnergy += (rawEnergy - smoothedEnergy) * eSpeed;
         }
       }
 
       if (!hasRealAudio) {
-        // High-precision musical rhythm model synchronized with playback clock
-        const t = audio.currentTime || performance.now() / 1000;
-        const beatPeriod = 0.4838;
-        const beatPhase = (t % beatPeriod) / beatPeriod;
-        const kick = Math.pow(Math.max(0, 1 - beatPhase * 3.2), 2.0);
-        const subKick = Math.pow(Math.max(0, 1 - ((t % (beatPeriod * 2)) / (beatPeriod * 2)) * 2.6), 1.8);
-        const snare = Math.pow(Math.max(0, 1 - (((t + beatPeriod * 0.5) % beatPeriod) / beatPeriod) * 3.0), 1.8);
+        // True silence or quiet passages: decay to calm resting state (ZERO phantom hits)
+        smoothedBass *= 0.86;
+        smoothedMid *= 0.86;
+        smoothedTreble *= 0.86;
+        smoothedEnergy *= 0.86;
 
-        const wave = 0.5 + 0.5 * Math.sin(t * 2.8);
-        const targetBass = Math.min(1, kick * 0.75 + subKick * 0.35 + wave * 0.15);
-        const targetMid = Math.min(1, snare * 0.55 + wave * 0.3);
-        const targetTreble = Math.min(1, kick * 0.4 + wave * 0.25);
-        const targetEnergy = targetBass * 0.5 + targetMid * 0.35 + targetTreble * 0.15;
-
-        smoothedBass += (targetBass - smoothedBass) * 0.26;
-        smoothedMid += (targetMid - smoothedMid) * 0.22;
-        smoothedTreble += (targetTreble - smoothedTreble) * 0.26;
-        smoothedEnergy += (targetEnergy - smoothedEnergy) * 0.24;
+        if (smoothedBass < 0.005) smoothedBass = 0;
+        if (smoothedMid < 0.005) smoothedMid = 0;
+        if (smoothedTreble < 0.005) smoothedTreble = 0;
+        if (smoothedEnergy < 0.005) smoothedEnergy = 0;
       }
 
       // Update CSS custom properties (2 decimals is sufficient precision, saves string allocs)
@@ -144,11 +143,24 @@ export function useAudioReactive(targetRef?: React.RefObject<HTMLElement | null>
       setProps('--audio-bar-1', `${b1}px`);
       setProps('--audio-bar-2', `${b2}px`);
       setProps('--audio-bar-3', `${b3}px`);
+
+      animId = requestAnimationFrame(tick);
     };
 
     animId = requestAnimationFrame(tick);
 
+    const unsub = useWindowFreezeStore.subscribe((state, prev) => {
+      if (!state.isFrozen && prev.isFrozen) {
+        if (!isRunning) {
+          isRunning = true;
+          lastUpdate = performance.now();
+          animId = requestAnimationFrame(tick);
+        }
+      }
+    });
+
     return () => {
+      unsub();
       cancelAnimationFrame(animId);
     };
   }, [isPlaying, targetRef, enableVisualEffects]);

@@ -11,6 +11,17 @@ import {
   type PersonalWaveContentInput,
   type PersonalWaveOptions,
 } from '../../api';
+import { useDislikesStore } from '../dislikes/dislikesStore';
+
+function isTrackHidden(t: Track): boolean {
+  try {
+    const dislikes = useDislikesStore.getState();
+    const artistId = t.artist_id || (t.artists && t.artists[0]?.id);
+    return dislikes.isDisliked(t.id) || dislikes.isArtistDisliked(artistId);
+  } catch {
+    return false;
+  }
+}
 
 export interface QueueContext {
   type: 'favourites' | 'playlist' | 'album' | 'artist' | 'custom';
@@ -125,6 +136,13 @@ interface PlayerState {
   openFullscreenPlayer: (tab?: 'track' | 'lyrics' | 'queue') => void;
   closeFullscreenPlayer: () => void;
   setFullscreenTab: (tab: 'track' | 'lyrics' | 'queue') => void;
+
+  // Right Side Panel (Spotify-style)
+  sidePanelTab: 'queue' | 'lyrics' | null;
+  openSidePanel: (tab: 'queue' | 'lyrics') => void;
+  toggleSidePanel: (tab: 'queue' | 'lyrics') => void;
+  closeSidePanel: () => void;
+  setSidePanelTab: (tab: 'queue' | 'lyrics') => void;
 }
 
 let activeQueueFetchPromise: Promise<boolean> | null = null;
@@ -458,7 +476,7 @@ export const usePlayerStore = create<PlayerState>()(
                 if (res?.tracks && res.tracks.length > 0) {
                   const currentQueue = get().queue;
                   const tailIds = new Set(currentQueue.slice(-15).map((t) => t.id));
-                  const toAdd = res.tracks.filter((t) => !tailIds.has(t.id));
+                  const toAdd = res.tracks.filter((t) => !tailIds.has(t.id) && !isTrackHidden(t));
                   if (toAdd.length > 0) {
                     set((state) => ({ queue: [...state.queue, ...toAdd] }));
                   }
@@ -481,7 +499,7 @@ export const usePlayerStore = create<PlayerState>()(
               if (newTracks && newTracks.length > 0) {
                 const currentQueue = get().queue;
                 const tailIds = new Set(currentQueue.slice(-10).map((t) => t.id));
-                const toAdd = newTracks.filter((t) => !tailIds.has(t.id));
+                const toAdd = newTracks.filter((t) => !tailIds.has(t.id) && !isTrackHidden(t));
                 if (toAdd.length > 0) {
                   set((state) => ({ queue: [...state.queue, ...toAdd] }));
                 }
@@ -531,12 +549,13 @@ export const usePlayerStore = create<PlayerState>()(
                       }
                     : null;
                   const newTracks = await getPersonalWave(contentInput, 1, waveOptions);
-                  if (newTracks && newTracks.length > 0) {
+                  const validTracks = newTracks?.filter((t) => !isTrackHidden(t)) ?? [];
+                  if (validTracks.length > 0) {
                     const currentQueue = get().queue;
                     set({
-                      queue: [...currentQueue, ...newTracks],
+                      queue: [...currentQueue, ...validTracks],
                       queueIndex: currentQueue.length,
-                      currentTrack: newTracks[0],
+                      currentTrack: validTracks[0],
                       progress: 0,
                       seekTarget: null,
                       isPlaying: true,
@@ -663,6 +682,14 @@ export const usePlayerStore = create<PlayerState>()(
 
       setFullscreenTab: (tab) =>
         set({ fullscreenTab: tab }),
+
+      // Right Side Panel
+      sidePanelTab: null,
+      openSidePanel: (tab) => set({ sidePanelTab: tab }),
+      toggleSidePanel: (tab) =>
+        set((state) => ({ sidePanelTab: state.sidePanelTab === tab ? null : tab })),
+      closeSidePanel: () => set({ sidePanelTab: null }),
+      setSidePanelTab: (tab) => set({ sidePanelTab: tab }),
     }),
     {
       name: 'zvuk-player',
@@ -673,6 +700,7 @@ export const usePlayerStore = create<PlayerState>()(
         shuffle: state.shuffle,
         repeat: state.repeat,
         quality: state.quality,
+        sidePanelTab: state.sidePanelTab,
 
         // Playback state & Queue
         currentTrack: state.currentTrack,

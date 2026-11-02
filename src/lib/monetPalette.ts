@@ -1,16 +1,19 @@
 /**
- * Monet Palette Engine (Material You style adaptive color system)
- * Extracts vibrant seed colors from artist palettes/avatars and generates
- * harmonious tonal accents, volumetric glow RGBs, and secondary auroras.
+ * Monet Palette Engine (Material You style adaptive color & gradient system)
+ * Extracts multiple key distinct vibrant colors from album artwork / avatars,
+ * and generates cohesive multi-stop gradients, volumetric lighting, and tonal accents.
  */
 
 export interface MonetTheme {
   accentColor: string;      // High-contrast readable color for typography & highlights: "rgb(r, g, b)"
   accentHex: string;        // Hex representation: "#rrggbb"
-  glowRgb: string;          // Rich mid-tone RGB for volumetric box-shadows & glows: "r, g, b"
-  secondaryRgb: string;     // Harmonious analogous RGB for multi-stop auroras: "r, g, b"
-  tertiaryRgb: string;      // Third harmonic tone: "r, g, b"
-  rawSeedRgb: string;       // Direct sampled color: "r, g, b"
+  glowRgb: string;          // Primary key color RGB for volumetric glow & blooms: "r, g, b"
+  secondaryRgb: string;     // Secondary key color RGB: "r, g, b"
+  tertiaryRgb: string;      // Tertiary key color RGB: "r, g, b"
+  rawSeedRgb: string;       // Direct sampled primary color: "r, g, b"
+  palette: string[];        // Array of key hex colors: ["#rrggbb", "#rrggbb", "#rrggbb"]
+  gradient: string;         // Multi-stop CSS linear-gradient: "linear-gradient(135deg, ...)"
+  gradientRadial: string;   // Atmospheric CSS radial-gradient: "radial-gradient(circle, ...)"
 }
 
 export function parseHexToRgb(hex: string): [number, number, number] | null {
@@ -100,17 +103,46 @@ export function hslToRgb(h: number, s: number, l: number): [number, number, numb
   ];
 }
 
+export interface ColorEntry {
+  h: number;
+  s: number;
+  l: number;
+  rgb: [number, number, number];
+}
+
 /**
- * Given an HSL seed color, creates a cohesive Material You / Monet theme
- * tailored for modern dark surfaces.
+ * Checks whether two colors are perceptually distinct enough to be separate gradient stops.
  */
-export function buildMonetThemeFromHsl(h: number, s: number, l: number): MonetTheme {
-  // If saturation is low (monochrome, black & white, or grayscale image)
-  // Produce a crisp, elegant platinum / cool silver aesthetic instead of turning into red
-  if (s < 0.16) {
-    const [gr, gg, gb] = hslToRgb(215, 0.06, 0.68);
-    const [sr, sg, sb] = hslToRgb(215, 0.05, 0.52);
-    const [tr, tg, tb] = hslToRgb(215, 0.04, 0.38);
+export function areColorsDistinct(c1: ColorEntry, c2: ColorEntry): boolean {
+  // Angular hue difference (0 .. 180)
+  const diffH = Math.min(Math.abs(c1.h - c2.h), 360 - Math.abs(c1.h - c2.h));
+  // Lightness difference
+  const diffL = Math.abs(c1.l - c2.l);
+  // Euclidean RGB distance
+  const dr = c1.rgb[0] - c2.rgb[0];
+  const dg = c1.rgb[1] - c2.rgb[1];
+  const db = c1.rgb[2] - c2.rgb[2];
+  const rgbDist = Math.sqrt(dr * dr + dg * dg + db * db);
+
+  return diffH >= 26 || (diffL >= 0.28 && c1.s > 0.18 && c2.s > 0.18) || rgbDist >= 62;
+}
+
+/**
+ * Constructs a cohesive Material You / Monet theme and gradient from multiple key colors.
+ */
+export function buildMonetThemeFromMultiColors(colors: ColorEntry[]): MonetTheme {
+  const primary = colors[0] || { h: 140, s: 0.6, l: 0.5, rgb: [70, 200, 110] };
+
+  // 1. Check if the palette is completely monochrome / grayscale
+  const maxSat = Math.max(...colors.map((c) => c.s));
+  if (maxSat < 0.16) {
+    const [gr, gg, gb] = hslToRgb(215, 0.05, 0.68);
+    const [sr, sg, sb] = hslToRgb(215, 0.05, 0.50);
+    const [tr, tg, tb] = hslToRgb(215, 0.04, 0.35);
+
+    const pHex = rgbToHex(gr, gg, gb);
+    const sHex = rgbToHex(sr, sg, sb);
+    const tHex = rgbToHex(tr, tg, tb);
 
     return {
       accentColor: 'rgb(235, 240, 248)',
@@ -119,24 +151,51 @@ export function buildMonetThemeFromHsl(h: number, s: number, l: number): MonetTh
       secondaryRgb: `${sr}, ${sg}, ${sb}`,
       tertiaryRgb: `${tr}, ${tg}, ${tb}`,
       rawSeedRgb: `${gr}, ${gg}, ${gb}`,
+      palette: [pHex, sHex, tHex],
+      gradient: `linear-gradient(135deg, rgb(${gr}, ${gg}, ${gb}) 0%, rgb(${sr}, ${sg}, ${sb}) 50%, rgb(${tr}, ${tg}, ${tb}) 100%)`,
+      gradientRadial: `radial-gradient(circle at 30% 30%, rgba(${gr}, ${gg}, ${gb}, 0.55) 0%, rgba(${sr}, ${sg}, ${sb}, 0.28) 50%, rgba(${tr}, ${tg}, ${tb}, 0.06) 100%)`,
     };
   }
 
-  // Boost chroma slightly so pastel or muted avatars come alive, but keep natural
-  const boostS = Math.max(0.38, Math.min(0.96, s * 1.2));
+  // 2. Process Primary Key Color
+  const boostS1 = Math.max(0.42, Math.min(0.96, primary.s * 1.2));
+  // Accent for text: L ~ 0.70 - 0.78 for WCAG high contrast on dark surfaces
+  const accentL = Math.max(0.68, Math.min(0.80, primary.l > 0.4 ? primary.l * 1.15 : 0.70));
+  const [ar, ag, ab] = hslToRgb(primary.h, boostS1, accentL);
+  // Glow RGB: midtone ~ 0.52 for volumetric bloom
+  const [gr, gg, gb] = hslToRgb(primary.h, Math.max(0.55, boostS1), 0.52);
 
-  // 1. Accent for text on dark theme: Lightness ~ 0.68 - 0.76 ensures APCA/WCAG high readability
-  const targetAccentL = Math.max(0.66, Math.min(0.78, l > 0.4 ? l * 1.15 : 0.68));
-  const [ar, ag, ab] = hslToRgb(h, boostS, targetAccentL);
+  // 3. Process Secondary Key Color (either extracted from cover or synthesized)
+  let sr: number, sg: number, sb: number;
+  if (colors.length > 1) {
+    const secondary = colors[1];
+    const boostS2 = Math.max(0.40, Math.min(0.94, secondary.s * 1.15));
+    const targetL2 = Math.max(0.42, Math.min(0.62, secondary.l));
+    [sr, sg, sb] = hslToRgb(secondary.h, boostS2, targetL2);
+  } else {
+    // Harmonic rotation +35 deg
+    [sr, sg, sb] = hslToRgb((primary.h + 35) % 360, Math.max(0.44, boostS1 * 0.85), 0.48);
+  }
 
-  // 2. Glow RGB: Rich midtone ~ 0.52 L provides strong saturated volumetric lighting
-  const [gr, gg, gb] = hslToRgb(h, Math.max(0.55, boostS), 0.52);
+  // 4. Process Tertiary Key Color
+  let tr: number, tg: number, tb: number;
+  if (colors.length > 2) {
+    const tertiary = colors[2];
+    const boostS3 = Math.max(0.38, Math.min(0.92, tertiary.s * 1.1));
+    const targetL3 = Math.max(0.38, Math.min(0.58, tertiary.l));
+    [tr, tg, tb] = hslToRgb(tertiary.h, boostS3, targetL3);
+  } else {
+    // Harmonic rotation -30 deg or +70 deg
+    const h3 = colors.length > 1 ? (colors[1].h + 32) % 360 : (primary.h - 30 + 360) % 360;
+    [tr, tg, tb] = hslToRgb(h3, Math.max(0.40, boostS1 * 0.75), 0.44);
+  }
 
-  // 3. Secondary analogous hue (+28 degrees) for atmospheric gradient depth
-  const [sr, sg, sb] = hslToRgb((h + 28) % 360, Math.max(0.42, boostS * 0.85), 0.48);
+  const p1Hex = rgbToHex(gr, gg, gb);
+  const p2Hex = rgbToHex(sr, sg, sb);
+  const p3Hex = rgbToHex(tr, tg, tb);
 
-  // 4. Tertiary complementary/analogous hue (-24 degrees)
-  const [tr, tg, tb] = hslToRgb((h - 24 + 360) % 360, Math.max(0.38, boostS * 0.75), 0.44);
+  const gradient = `linear-gradient(135deg, rgb(${gr}, ${gg}, ${gb}) 0%, rgb(${sr}, ${sg}, ${sb}) 50%, rgb(${tr}, ${tg}, ${tb}) 100%)`;
+  const gradientRadial = `radial-gradient(circle at 30% 30%, rgba(${gr}, ${gg}, ${gb}, 0.58) 0%, rgba(${sr}, ${sg}, ${sb}, 0.32) 52%, rgba(${tr}, ${tg}, ${tb}, 0.08) 100%)`;
 
   return {
     accentColor: `rgb(${ar}, ${ag}, ${ab})`,
@@ -145,11 +204,23 @@ export function buildMonetThemeFromHsl(h: number, s: number, l: number): MonetTh
     secondaryRgb: `${sr}, ${sg}, ${sb}`,
     tertiaryRgb: `${tr}, ${tg}, ${tb}`,
     rawSeedRgb: `${gr}, ${gg}, ${gb}`,
+    palette: [p1Hex, p2Hex, p3Hex],
+    gradient,
+    gradientRadial,
   };
 }
 
 /**
- * Evaluates candidate colors and selects the best Monet seed color.
+ * Backward-compatible single HSL builder.
+ */
+export function buildMonetThemeFromHsl(h: number, s: number, l: number): MonetTheme {
+  const rgb = hslToRgb(h, s, l);
+  return buildMonetThemeFromMultiColors([{ h, s, l, rgb }]);
+}
+
+/**
+ * Evaluates candidate colors from a comma-separated palette string
+ * and extracts up to 3 distinct key colors to generate the theme and gradient.
  */
 export function extractMonetThemeFromPalette(
   paletteString?: string | null,
@@ -168,57 +239,53 @@ export function extractMonetThemeFromPalette(
     return buildDefaultTheme(fallbackRgb);
   }
 
-  const parsed = rawHexes
-    .map((hex) => {
-      const rgb = parseHexToRgb(hex);
-      if (!rgb) return null;
-      const [h, s, l] = rgbToHsl(rgb[0], rgb[1], rgb[2]);
-      return { hex, rgb, h, s, l };
-    })
-    .filter((c): c is NonNullable<typeof c> => c !== null);
+  const parsed: ColorEntry[] = [];
+  for (const hex of rawHexes) {
+    const rgb = parseHexToRgb(hex);
+    if (!rgb) continue;
+    const [h, s, l] = rgbToHsl(rgb[0], rgb[1], rgb[2]);
+    parsed.push({ h, s, l, rgb });
+  }
 
   if (parsed.length === 0) {
     return buildDefaultTheme(fallbackRgb);
   }
 
-  // Check maximum saturation across the palette
+  // Check if entire palette is grayscale
   const maxSat = Math.max(...parsed.map((c) => c.s));
-  if (maxSat < 0.18) {
-    // Entire palette is monochrome / grayscale
+  if (maxSat < 0.16) {
     return buildMonetThemeFromHsl(215, 0.05, 0.65);
   }
 
-  // Parse and score candidates that have genuine color
-  let bestScore = -Infinity;
-  let bestHsl: [number, number, number] | null = null;
+  // Score candidate colors: favors saturated, well-balanced midtones
+  const scored = parsed
+    .filter((c) => c.l >= 0.06 && c.l <= 0.94)
+    .map((c) => {
+      const lightnessScore = 1.0 - Math.abs(c.l - 0.52) * 1.6;
+      const saturationScore = c.s * 2.5;
+      const score = saturationScore + lightnessScore;
+      return { ...c, score };
+    })
+    .sort((a, b) => b.score - a.score);
 
-  for (const item of parsed) {
-    const { h, s, l } = item;
+  if (scored.length === 0) {
+    return buildMonetThemeFromHsl(215, 0.05, 0.65);
+  }
 
-    // Discard near blacks, washed-out whites, and low-saturation grays
-    if (l < 0.08 || l > 0.94 || s < 0.18) {
-      continue;
-    }
+  // Select up to 3 distinct key colors from the palette
+  const distinctColors: ColorEntry[] = [scored[0]];
 
-    // Monet scoring:
-    // Higher saturation gets large bonus
-    // Balanced lightness around 0.45-0.65 gets bonus
-    const lightnessScore = 1 - Math.abs(l - 0.55) * 1.5;
-    const saturationScore = s * 2.5;
-    const score = saturationScore + lightnessScore;
-
-    if (score > bestScore) {
-      bestScore = score;
-      bestHsl = [h, s, l];
+  for (let i = 1; i < scored.length && distinctColors.length < 3; i++) {
+    const candidate = scored[i];
+    const isDistinctFromAll = distinctColors.every((selected) =>
+      areColorsDistinct(candidate, selected)
+    );
+    if (isDistinctFromAll) {
+      distinctColors.push(candidate);
     }
   }
 
-  if (bestHsl && bestScore > 0.35) {
-    return buildMonetThemeFromHsl(bestHsl[0], bestHsl[1], bestHsl[2]);
-  }
-
-  // If no vibrant candidate qualified, use silver/platinum
-  return buildMonetThemeFromHsl(215, 0.05, 0.65);
+  return buildMonetThemeFromMultiColors(distinctColors);
 }
 
 function buildDefaultTheme(fallbackRgb: string): MonetTheme {
@@ -234,8 +301,8 @@ function buildDefaultTheme(fallbackRgb: string): MonetTheme {
 const imageThemeCache = new Map<string, MonetTheme>();
 
 /**
- * Asynchronously extracts Monet theme from an image avatar URL via offscreen canvas.
- * Inspects real image pixel data first to detect black-and-white photos accurately.
+ * Asynchronously extracts Monet theme and gradient from an image URL via offscreen canvas.
+ * Samples distinct color clusters directly from the image pixels.
  */
 export async function extractMonetFromImage(
   imageUrl?: string | null,
@@ -281,8 +348,16 @@ export async function extractMonetFromImage(
         let totalSat = 0;
         let validPixels = 0;
 
-        // Collect color buckets
-        const hexMap = new Map<string, number>();
+        // Bucket pixel colors with step quantizing to group similar tones
+        interface Bucket {
+          rgb: [number, number, number];
+          h: number;
+          s: number;
+          l: number;
+          count: number;
+        }
+        const bucketMap = new Map<string, Bucket>();
+
         for (let i = 0; i < data.length; i += 4 * 2) {
           const r = data[i];
           const g = data[i + 1];
@@ -290,19 +365,25 @@ export async function extractMonetFromImage(
           const a = data[i + 3];
           if (a < 128) continue;
 
-          const [, s] = rgbToHsl(r, g, b);
+          const [h, s, l] = rgbToHsl(r, g, b);
           totalSat += s;
           validPixels++;
 
-          // Quantize to reduce noise
+          // Quantize to step of 20
           const qr = Math.round(r / 20) * 20;
           const qg = Math.round(g / 20) * 20;
           const qb = Math.round(b / 20) * 20;
-          const hex = rgbToHex(qr, qg, qb);
-          hexMap.set(hex, (hexMap.get(hex) || 0) + 1);
+          const key = `${qr},${qg},${qb}`;
+
+          const existing = bucketMap.get(key);
+          if (existing) {
+            existing.count++;
+          } else {
+            bucketMap.set(key, { rgb: [qr, qg, qb], h, s, l, count: 1 });
+          }
         }
 
-        // If average saturation across the entire avatar is very low, it's black-and-white / grayscale!
+        // Grayscale / monochrome detection
         const avgSat = validPixels > 0 ? totalSat / validPixels : 0;
         if (avgSat < 0.16) {
           const silverTheme = buildMonetThemeFromHsl(215, 0.05, 0.72);
@@ -311,11 +392,40 @@ export async function extractMonetFromImage(
           return;
         }
 
-        const sortedHexes = Array.from(hexMap.entries())
-          .sort((a, b) => b[1] - a[1])
-          .map((e) => e[0]);
+        // Score buckets by population weight and chromatic vibrance
+        const scoredBuckets = Array.from(bucketMap.values())
+          .filter((b) => b.l >= 0.06 && b.l <= 0.94 && b.s >= 0.14)
+          .map((b) => {
+            const lightnessScore = 1.0 - Math.abs(b.l - 0.52) * 1.5;
+            const saturationScore = b.s * 2.6;
+            const popScore = Math.log10(b.count + 1);
+            const score = (saturationScore + lightnessScore) * 1.4 + popScore;
+            return { ...b, score };
+          })
+          .sort((a, b) => b.score - a.score);
 
-        const theme = extractMonetThemeFromPalette(sortedHexes.join(','));
+        if (scoredBuckets.length === 0) {
+          const silverTheme = buildMonetThemeFromHsl(215, 0.05, 0.65);
+          imageThemeCache.set(imageUrl, silverTheme);
+          resolve(silverTheme);
+          return;
+        }
+
+        // Select top 3 distinct color clusters from the image
+        const distinctColors: ColorEntry[] = [
+          { h: scoredBuckets[0].h, s: scoredBuckets[0].s, l: scoredBuckets[0].l, rgb: scoredBuckets[0].rgb },
+        ];
+
+        for (let i = 1; i < scoredBuckets.length && distinctColors.length < 3; i++) {
+          const candidate = scoredBuckets[i];
+          const entry: ColorEntry = { h: candidate.h, s: candidate.s, l: candidate.l, rgb: candidate.rgb };
+          const isDistinct = distinctColors.every((selected) => areColorsDistinct(entry, selected));
+          if (isDistinct) {
+            distinctColors.push(entry);
+          }
+        }
+
+        const theme = buildMonetThemeFromMultiColors(distinctColors);
         imageThemeCache.set(imageUrl, theme);
         resolve(theme);
       } catch {

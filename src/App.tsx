@@ -6,6 +6,7 @@ import { Sidebar } from './components/Sidebar';
 import { ToastContainer } from './components/Toast';
 import { PlayerBar } from './features/player/components/PlayerBar';
 import { FullscreenPlayer } from './features/player/components/FullscreenPlayer';
+import { RightSidePanel } from './features/player/components/RightSidePanel';
 import { LoginPage } from './features/auth/components/LoginPage';
 import { HomePage } from './features/explore/components/HomePage';
 import { SearchPage } from './features/search/components/SearchPage';
@@ -30,11 +31,13 @@ import { useMediaSession } from './features/player/useMediaSession';
 import { useDiscordPresence } from './features/player/useDiscordPresence';
 import { useAudioReactive } from './features/player/useAudioReactive';
 import { useFavouritesStore } from './features/favourites/favouritesStore';
+import { useDislikesStore } from './features/dislikes/dislikesStore';
 import { extractMonetThemeFromPalette, extractMonetFromImage, type MonetTheme } from './lib/monetPalette';
 import { usePlaylistModalStore } from './features/playlists/playlistModalStore';
 
 import { AuroraCanvas } from './components/AuroraCanvas';
 import { useAppearanceSettingsStore } from './features/settings/appearanceSettingsStore';
+import { initWindowFreezeListeners } from './lib/windowFreezeStore';
 
 function AppShell({ isRevealed = true }: { isRevealed?: boolean }) {
   useAudioPlayer();
@@ -46,11 +49,13 @@ function AppShell({ isRevealed = true }: { isRevealed?: boolean }) {
   const location = useLocation();
   const isHome = location.pathname === '/';
   const isPlaying = usePlayerStore((s) => s.isPlaying);
+  const sidePanelTab = usePlayerStore((s) => s.sidePanelTab);
   const waveMood = usePlayerStore((s) => s.waveMood);
   const isWaveMode = usePlayerStore((s) => s.isWaveMode);
   const waveType = usePlayerStore((s) => s.waveType);
   const waveArtist = usePlayerStore((s) => s.waveArtist);
   const loadLikedIds = useFavouritesStore((s) => s.loadLikedIds);
+  const loadDislikedIds = useDislikesStore((s) => s.loadDislikedIds);
 
   const [artistMonet, setArtistMonet] = useState<MonetTheme | null>(null);
   const mainAreaRef = useRef<HTMLElement>(null);
@@ -60,8 +65,9 @@ function AppShell({ isRevealed = true }: { isRevealed?: boolean }) {
 
   useEffect(() => {
     loadLikedIds();
+    loadDislikedIds();
     loadUserPlaylistIds();
-  }, [loadLikedIds, loadUserPlaylistIds]);
+  }, [loadLikedIds, loadDislikedIds, loadUserPlaylistIds]);
 
   useEffect(() => {
     if (isWaveMode && waveType === 'artist' && waveArtist) {
@@ -81,10 +87,14 @@ function AppShell({ isRevealed = true }: { isRevealed?: boolean }) {
     if (artistMonet) {
       document.documentElement.style.setProperty('--wave-mood-rgb', artistMonet.glowRgb);
       document.documentElement.style.setProperty('--aurora-secondary-rgb', artistMonet.secondaryRgb);
+      document.documentElement.style.setProperty('--aurora-tertiary-rgb', artistMonet.tertiaryRgb);
+      document.documentElement.style.setProperty('--wave-mood-gradient', artistMonet.gradient);
     } else {
       const rgb = waveMood?.activeRgb ?? '112, 220, 85';
       document.documentElement.style.setProperty('--wave-mood-rgb', rgb);
       document.documentElement.style.removeProperty('--aurora-secondary-rgb');
+      document.documentElement.style.removeProperty('--aurora-tertiary-rgb');
+      document.documentElement.style.removeProperty('--wave-mood-gradient');
     }
   }, [artistMonet, waveMood]);
 
@@ -121,7 +131,7 @@ function AppShell({ isRevealed = true }: { isRevealed?: boolean }) {
     <div
       className={`app-layout ${isHome ? 'app-layout--home' : ''} ${
         !isRevealed ? 'app-layout--hidden' : 'app-layout--revealing'
-      }`}
+      } ${sidePanelTab ? 'app-layout--has-side-panel' : ''}`}
     >
       {enableVisualEffects && (
         <div
@@ -159,6 +169,7 @@ function AppShell({ isRevealed = true }: { isRevealed?: boolean }) {
       <ToastContainer />
       <UpdateModal />
       <AddToPlaylistModal />
+      <RightSidePanel />
       <PlayerBar />
       <FullscreenPlayer />
     </div>
@@ -174,6 +185,10 @@ export default function App() {
   useEffect(() => {
     checkAuth();
   }, [checkAuth]);
+
+  useEffect(() => {
+    return initWindowFreezeListeners();
+  }, []);
 
   useEffect(() => {
     useUpdateStore.getState().init();

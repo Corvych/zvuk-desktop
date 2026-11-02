@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { usePlayerStore } from './playerStore';
 import { useFavouritesStore } from '../favourites/favouritesStore';
+import { useDislikesStore } from '../dislikes/dislikesStore';
 
 /**
  * Global keyboard shortcuts for the player.
@@ -38,8 +39,11 @@ export function useHotkeys() {
     isFullscreenPlayerOpen,
     openFullscreenPlayer,
     closeFullscreenPlayer,
+    toggleSidePanel,
+    closeSidePanel,
   } = usePlayerStore();
   const toggleLikeTrack = useFavouritesStore((s) => s.toggleLikeTrack);
+  const toggleDislikeTrack = useDislikesStore((s) => s.toggleDislikeTrack);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -56,6 +60,11 @@ export function useHotkeys() {
             target.blur();
           }
           closeFullscreenPlayer();
+          return;
+        }
+        if (usePlayerStore.getState().sidePanelTab) {
+          e.preventDefault();
+          closeSidePanel();
           return;
         }
       }
@@ -87,6 +96,21 @@ export function useHotkeys() {
         if (!currentTrack) return;
         e.preventDefault();
         toggleLikeTrack(currentTrack.id);
+        return;
+      }
+
+      // D — toggle dislike on current track
+      if (code === 'KeyD' || key === 'd' || key === 'D' || key === 'в' || key === 'В') {
+        if (!currentTrack) return;
+        e.preventDefault();
+        toggleDislikeTrack(currentTrack.id);
+        return;
+      }
+
+      // Q — toggle queue in side panel
+      if (code === 'KeyQ' || key === 'q' || key === 'Q' || key === 'й' || key === 'Й') {
+        e.preventDefault();
+        toggleSidePanel('queue');
         return;
       }
 
@@ -179,6 +203,7 @@ export function useHotkeys() {
     toggleShuffle,
     cycleRepeat,
     toggleLikeTrack,
+    toggleDislikeTrack,
     isFullscreenPlayerOpen,
     openFullscreenPlayer,
     closeFullscreenPlayer,

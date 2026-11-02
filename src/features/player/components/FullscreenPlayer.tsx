@@ -4,10 +4,13 @@ import { useFavouritesStore } from '../../favourites/favouritesStore';
 import { formatTime } from '../../../lib/formatters';
 import { extractMonetFromImage, extractMonetThemeFromPalette } from '../../../lib/monetPalette';
 import { LikeButton } from '../../../components/LikeButton';
+import { DislikeButton } from '../../../components/DislikeButton';
+import { DislikeIcon } from '../../../components/DislikeIcon';
+import { useDislikesStore } from '../../dislikes/dislikesStore';
 import { ShareIcon } from '../../../components/ShareIcon';
 import { ArtistLinks } from '../../../components/ArtistLinks';
 import { showToast } from '../../../components/Toast';
-import { getOrCreateAudio, getAnalyser } from '../audioService';
+import { getOrCreateAudio } from '../audioService';
 import {
   fetchUnifiedLyrics,
   probeAllSources,
@@ -20,259 +23,17 @@ import { useLyricsSettingsStore } from '../../settings/lyricsSettingsStore';
 import { useVolumeWheel } from '../useVolumeWheel';
 import { usePlaylistModalStore } from '../../playlists/playlistModalStore';
 import { getCoverUrl } from '../../../api';
-
-export interface LyricWord {
-  text: string;
-  time: number;
-  endTime: number;
-  hasSpaceAfter?: boolean;
-}
-
-export interface LyricLine {
-  time?: number; // seconds
-  endTime?: number;
-  text: string;
-  words: LyricWord[];
-  hasEnhancedTimings: boolean;
-}
-
-interface WordBoundary {
-  word: string;
-  startIndex: number;
-  endIndex: number;
-  boundaryFrac: number;
-  nextWordStartFrac: number;
-  pauseWeight: number;
-}
-
-function extractWordBoundaries(text: string): WordBoundary[] {
-  const len = text.length;
-  if (len === 0) return [];
-
-  const regex = /\S+/g;
-  const matches = [...text.matchAll(regex)];
-  if (matches.length === 0) return [];
-
-  const boundaries: WordBoundary[] = [];
-  for (let i = 0; i < matches.length; i++) {
-    const m = matches[i];
-    const word = m[0];
-    const startIndex = m.index!;
-    const endIndex = startIndex + word.length;
-    const boundaryFrac = endIndex / len;
-
-    const nextMatch = matches[i + 1];
-    const nextWordStartFrac = nextMatch ? nextMatch.index! / len : 1.0;
-
-    const hasStrongPunctuation = /[,\.\?!:;\u2014\-]/.test(word[word.length - 1]);
-    const hasEllipsis = word.includes('...') || word.includes('…');
-    const pauseWeight = hasEllipsis ? 2.8 : hasStrongPunctuation ? 2.0 : 1.0;
-
-    boundaries.push({
-      word,
-      startIndex,
-      endIndex,
-      boundaryFrac,
-      nextWordStartFrac,
-      pauseWeight,
-    });
-  }
-  return boundaries;
-}
-
-function parseLyrics(rawLyrics: string, isSynced: boolean): LyricLine[] {
-  if (!rawLyrics) return [];
-
-  // 1. Check for TTML (Apple Music / Better Lyrics word-by-word or line sync)
-  const isTtml = rawLyrics.includes('<tt') || /<p\s+begin=/i.test(rawLyrics);
-  if (isTtml) {
-    const parseTtmlTime = (str: string): number => {
-      if (!str) return 0;
-      const parts = str.trim().split(':');
-      if (parts.length === 1) return parseFloat(parts[0]) || 0;
-      if (parts.length === 2) return parseInt(parts[0], 10) * 60 + (parseFloat(parts[1]) || 0);
-      if (parts.length === 3) return parseInt(parts[0], 10) * 3600 + parseInt(parts[1], 10) * 60 + (parseFloat(parts[2]) || 0);
-      return 0;
-    };
-
-    const pRegex = /<p\s+begin="([^"]+)"(?:[^>]*end="([^"]+)")?[^>]*>([\s\S]*?)<\/p>/gi;
-    const spanRegex = /<span\s+begin="([^"]+)"(?:[^>]*end="([^"]+)")?[^>]*>([\s\S]*?)<\/span>/gi;
-    const result: LyricLine[] = [];
-    let pMatch: RegExpExecArray | null;
-
-    while ((pMatch = pRegex.exec(rawLyrics)) !== null) {
-      const lineStart = parseTtmlTime(pMatch[1]);
-      const lineEnd = pMatch[2] ? parseTtmlTime(pMatch[2]) : undefined;
-      const inner = pMatch[3];
-
-      const spans = [...inner.matchAll(spanRegex)];
-      if (spans.length > 0) {
-        const words: LyricWord[] = [];
-        let fullText = '';
-
-        for (let j = 0; j < spans.length; j++) {
-          const sp = spans[j];
-          const wStart = parseTtmlTime(sp[1]);
-          const wEnd = sp[2]
-            ? parseTtmlTime(sp[2])
-            : j < spans.length - 1
-              ? parseTtmlTime(spans[j + 1][1])
-              : (lineEnd ?? (wStart + 1.0));
-          const wText = sp[3].replace(/<[^>]+>/g, '').trim();
-          if (!wText) continue;
-
-          fullText += (fullText ? ' ' : '') + wText;
-          words.push({
-            text: wText,
-            time: wStart,
-            endTime: wEnd,
-            hasSpaceAfter: j < spans.length - 1 && !/[\u4e00-\u9fa5]/.test(wText),
-          });
-        }
-
-        const cleanFull = fullText.trim();
-        if (cleanFull) {
-          result.push({
-            time: lineStart,
-            endTime: lineEnd ?? words[words.length - 1]?.endTime,
-            text: cleanFull,
-            words,
-            hasEnhancedTimings: true,
-          });
-        }
-      } else {
-        const cleanText = inner.replace(/<[^>]+>/g, '').trim();
-        if (cleanText) {
-          result.push({
-            time: lineStart,
-            endTime: lineEnd,
-            text: cleanText,
-            words: cleanText.split(/\s+/).map((w) => ({ text: w, time: 0, endTime: 0, hasSpaceAfter: true })),
-            hasEnhancedTimings: false,
-          });
-        }
-      }
-    }
-    if (result.length > 0) return result;
-  }
-
-  // 2. Standard or Enhanced LRC parsing
-  const lines = rawLyrics.split('\n');
-  const tempLines: { time?: number; rawText: string }[] = [];
-  const lineTimeRegex = /\[(\d{1,2}):(\d{2})(?:\.(\d{1,3}))?\]/g;
-  const tagOrWordRegex = /<(\d{1,2}):(\d{2})(?:\.(\d{1,3}))?>([^<]*)/g;
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed) {
-      tempLines.push({ rawText: '' });
-      continue;
-    }
-
-    const matches = [...trimmed.matchAll(lineTimeRegex)];
-    if (matches.length > 0) {
-      const cleanWithoutLineTags = trimmed.replace(lineTimeRegex, '').trim();
-      if (!cleanWithoutLineTags) continue;
-
-      for (const match of matches) {
-        const min = parseInt(match[1], 10);
-        const sec = parseInt(match[2], 10);
-        const ms = match[3] ? parseInt(match[3].padEnd(3, '0').slice(0, 3), 10) : 0;
-        const totalSeconds = min * 60 + sec + ms / 1000;
-        tempLines.push({ time: totalSeconds, rawText: cleanWithoutLineTags });
-      }
-    } else if (!isSynced) {
-      tempLines.push({ rawText: trimmed });
-    }
-  }
-
-  const sortedLines = isSynced && tempLines.some((r) => r.time !== undefined)
-    ? tempLines.sort((a, b) => (a.time ?? 0) - (b.time ?? 0))
-    : tempLines;
-
-  const result: LyricLine[] = [];
-  for (let i = 0; i < sortedLines.length; i++) {
-    const curr = sortedLines[i];
-    const next = sortedLines[i + 1];
-    const lineTime = curr.time;
-    const rawText = curr.rawText;
-
-    if (!rawText) continue;
-
-    const enhancedMatches = [...rawText.matchAll(tagOrWordRegex)];
-    if (enhancedMatches.length > 0) {
-      const words: LyricWord[] = [];
-      let fullText = '';
-
-      for (let j = 0; j < enhancedMatches.length; j++) {
-        const m = enhancedMatches[j];
-        const min = parseInt(m[1], 10);
-        const sec = parseInt(m[2], 10);
-        const ms = m[3] ? parseInt(m[3].padEnd(3, '0').slice(0, 3), 10) : 0;
-        const wordStart = min * 60 + sec + ms / 1000;
-        const wordText = m[4].trim();
-
-        let wordEnd = wordStart + Math.max(0.25, wordText.length * 0.08);
-        if (j < enhancedMatches.length - 1) {
-          const nm = enhancedMatches[j + 1];
-          const nMin = parseInt(nm[1], 10);
-          const nSec = parseInt(nm[2], 10);
-          const nMs = nm[3] ? parseInt(nm[3].padEnd(3, '0').slice(0, 3), 10) : 0;
-          wordEnd = nMin * 60 + nSec + nMs / 1000;
-        } else if (next && next.time !== undefined) {
-          wordEnd = Math.min(next.time, wordStart + 2.5);
-        }
-
-        fullText += (fullText ? ' ' : '') + wordText;
-        words.push({
-          text: wordText,
-          time: wordStart,
-          endTime: wordEnd,
-          hasSpaceAfter: j < enhancedMatches.length - 1,
-        });
-      }
-
-      result.push({
-        time: lineTime,
-        endTime: next?.time ?? words[words.length - 1]?.endTime,
-        text: fullText.trim(),
-        words,
-        hasEnhancedTimings: true,
-      });
-    } else {
-      const cleanText = rawText.replace(/<[^>]+>/g, '').trim();
-      const rawWords = cleanText.split(/\s+/).filter(Boolean);
-      const lineDuration = next && next.time !== undefined && lineTime !== undefined
-        ? Math.max(1.0, next.time - lineTime)
-        : 3.5;
-
-      const boundaries = extractWordBoundaries(cleanText);
-      const words: LyricWord[] = rawWords.map((w, idx) => {
-        const b = boundaries[idx];
-        const startFraction = idx === 0 ? 0 : boundaries[idx - 1]?.nextWordStartFrac ?? (idx / rawWords.length);
-        const endFraction = b ? b.boundaryFrac : (idx + 1) / rawWords.length;
-        const wStart = lineTime !== undefined ? lineTime + startFraction * lineDuration : 0;
-        const wEnd = lineTime !== undefined ? lineTime + endFraction * lineDuration : 0;
-
-        return {
-          text: w,
-          time: wStart,
-          endTime: wEnd,
-          hasSpaceAfter: idx < rawWords.length - 1,
-        };
-      });
-
-      result.push({
-        time: lineTime,
-        endTime: next?.time ?? (lineTime !== undefined ? lineTime + lineDuration : undefined),
-        text: cleanText,
-        words,
-        hasEnhancedTimings: false,
-      });
-    }
-  }
-  return result;
-}
+import { FluidBackdropVisualizer, type BackdropMode } from './FluidBackdropVisualizer';
+import { useWindowFreezeStore, getIsWindowFrozen } from '../../../lib/windowFreezeStore';
+import { getAudioQualityDetails } from '../../../lib/audioQuality';
+import { CrystalIcon } from '../../../components/CrystalIcon';
+import { parseLyrics } from '../lyricsParser';
+import { InstrumentalBreakIndicator } from './InstrumentalBreakIndicator';
+import {
+  useFullscreenSettingsStore,
+  detectScreenResolution,
+  SCALE_OPTIONS,
+} from '../fullscreenSettingsStore';
 
 // ─── Dashed Tick Ruler Progress Bar ──────────────────────────────────────────
 interface AudioRulerTrackProps {
@@ -379,11 +140,19 @@ export function FullscreenPlayer() {
     setQuality,
     closeFullscreenPlayer,
     setFullscreenTab,
-    setTrack,
+    playQueueTrack,
+    streamInfo,
   } = usePlayerStore();
+
+  const audioDetails = useMemo(() => getAudioQualityDetails(streamInfo, quality), [streamInfo, quality]);
 
   const isLiked = useFavouritesStore((s) => s.isLiked(currentTrack?.id));
   const toggleLikeTrack = useFavouritesStore((s) => s.toggleLikeTrack);
+  const isDisliked = useDislikesStore((s) => s.isDisliked(currentTrack?.id));
+  const toggleDislikeTrack = useDislikesStore((s) => s.toggleDislikeTrack);
+  const currentArtistId = currentTrack?.artist_id || currentTrack?.artists?.[0]?.id;
+  const isArtistDisliked = useDislikesStore((s) => s.isArtistDisliked(currentArtistId));
+  const toggleDislikeArtist = useDislikesStore((s) => s.toggleDislikeArtist);
 
   // Lyrics state
   const {
@@ -419,9 +188,8 @@ export function FullscreenPlayer() {
   const userScrollTimeoutRef = useRef<number | null>(null);
   const [showSyncButton, setShowSyncButton] = useState(false);
 
-  // Sub-second precision for ultra-smooth 60fps karaoke line progress & audio-reactivity
+  // Sub-second precision for ultra-smooth 60fps karaoke line progress
   const [smoothTime, setSmoothTime] = useState(progress);
-  const [audioVocalEnergy, setAudioVocalEnergy] = useState(0);
 
   // Check cache and reset preferredSource when track changes
   useEffect(() => {
@@ -492,57 +260,135 @@ export function FullscreenPlayer() {
   useEffect(() => {
     if (fullscreenTab !== 'lyrics' || !isPlaying) {
       setSmoothTime(progress);
-      setAudioVocalEnergy(0);
       return;
     }
     let animId: number;
-    const freqData = new Uint8Array(32);
-    let smoothedVocal = 0;
+    let isRunning = true;
 
     const tick = () => {
+      if (getIsWindowFrozen() || document.hidden) {
+        isRunning = false;
+        return;
+      }
       const audio = getOrCreateAudio();
       if (audio && !audio.paused) {
         setSmoothTime(audio.currentTime);
       }
 
-      // Sample vocal frequency band (mid frequencies bins 4-10)
-      const analyser = getAnalyser();
-      if (analyser) {
-        analyser.getByteFrequencyData(freqData);
-        let vocalSum = 0;
-        for (let i = 4; i <= 10; i++) {
-          vocalSum += freqData[i];
-        }
-        const rawVocal = vocalSum / (7 * 255);
-        smoothedVocal += (rawVocal - smoothedVocal) * 0.28;
-        setAudioVocalEnergy(smoothedVocal);
-      }
-
       animId = requestAnimationFrame(tick);
     };
     animId = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(animId);
-  }, [fullscreenTab, isPlaying, progress]);
+
+    const unsub = useWindowFreezeStore.subscribe((state, prev) => {
+      if (!state.isFrozen && prev.isFrozen) {
+        if (!isRunning) {
+          isRunning = true;
+          animId = requestAnimationFrame(tick);
+        }
+      }
+    });
+
+    return () => {
+      unsub();
+      cancelAnimationFrame(animId);
+    };
+  }, [fullscreenTab, isPlaying]);
 
   // More menu & sleep timer
   const [isMoreMenuOpen, setIsMoreMenuOpen] = useState(false);
   const moreMenuRef = useRef<HTMLDivElement>(null);
   const [isZenMode, setIsZenMode] = useState(false);
   const [qualityMenuOpen, setQualityMenuOpen] = useState(false);
+  const [isVisualizerMenuOpen, setIsVisualizerMenuOpen] = useState(false);
+  const visualizerMenuRef = useRef<HTMLDivElement>(null);
+
+  // Fullscreen responsive scale state
+  const scale = useFullscreenSettingsStore((s) => s.scale);
+  const setScale = useFullscreenSettingsStore((s) => s.setScale);
+  const zoomIn = useFullscreenSettingsStore((s) => s.zoomIn);
+  const zoomOut = useFullscreenSettingsStore((s) => s.zoomOut);
+  const resetZoom = useFullscreenSettingsStore((s) => s.resetZoom);
+
+  const [isScaleMenuOpen, setIsScaleMenuOpen] = useState(false);
+  const scaleMenuRef = useRef<HTMLDivElement>(null);
+
+  // Viewport dimensions for real-time resolution detection in UI
+  const [windowDimensions, setWindowDimensions] = useState(() => ({
+    width: typeof window !== 'undefined' ? window.innerWidth : 1920,
+    height: typeof window !== 'undefined' ? window.innerHeight : 1080,
+  }));
+
+  useEffect(() => {
+    const handleResize = () => {
+      setWindowDimensions({
+        width: window.innerWidth,
+        height: window.innerHeight,
+      });
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  const detectedScreen = useMemo(
+    () => detectScreenResolution(windowDimensions.width, windowDimensions.height),
+    [windowDimensions.width, windowDimensions.height]
+  );
+
   const [coverGlowRgb, setCoverGlowRgb] = useState<string>('80, 80, 95');
+  const [coverSecondaryRgb, setCoverSecondaryRgb] = useState<string>('120, 60, 140');
+  const [coverTertiaryRgb, setCoverTertiaryRgb] = useState<string>('50, 100, 160');
+  const [coverGradient, setCoverGradient] = useState<string>('linear-gradient(135deg, rgb(80, 80, 95) 0%, rgb(120, 60, 140) 50%, rgb(50, 100, 160) 100%)');
+
+  const [backdropMode, setBackdropMode] = useState<BackdropMode>(() => {
+    const saved = localStorage.getItem('zvuk_fullscreen_backdrop_mode');
+    if (saved === 'fluid' || saved === 'lava' || saved === 'off') {
+      return saved;
+    }
+    const legacy = localStorage.getItem('zvuk_fullscreen_dynamic_backdrop');
+    if (legacy === 'false') return 'off';
+    return 'fluid';
+  });
+
+  const selectBackdropMode = useCallback((mode: BackdropMode) => {
+    setBackdropMode(mode);
+    localStorage.setItem('zvuk_fullscreen_backdrop_mode', mode);
+    setIsVisualizerMenuOpen(false);
+  }, []);
+
+  const cycleBackdropMode = useCallback(() => {
+    setBackdropMode((prev) => {
+      const order: BackdropMode[] = ['fluid', 'lava', 'off'];
+      const next = order[(order.indexOf(prev) + 1) % order.length];
+      localStorage.setItem('zvuk_fullscreen_backdrop_mode', next);
+      return next;
+    });
+  }, []);
+
+  const backdropLabels: Record<BackdropMode, { full: string; short: string }> = {
+    fluid: { full: 'Жидкий шёлк', short: 'ШЁЛК' },
+    lava: { full: 'Лава-лампа', short: 'ЛАВА' },
+    off: { full: 'Статический фон', short: 'СТАТИКА' },
+  };
+
   const volumeControlRef = useVolumeWheel(isFullscreenPlayerOpen);
 
-  // Close more menu when clicking outside
+  // Close more menu, visualizer menu & scale menu when clicking outside
   useEffect(() => {
-    if (!isMoreMenuOpen) return;
+    if (!isMoreMenuOpen && !isVisualizerMenuOpen && !isScaleMenuOpen) return;
     const handleClickOutside = (e: MouseEvent) => {
-      if (moreMenuRef.current && !moreMenuRef.current.contains(e.target as Node)) {
+      if (isMoreMenuOpen && moreMenuRef.current && !moreMenuRef.current.contains(e.target as Node)) {
         setIsMoreMenuOpen(false);
+      }
+      if (isVisualizerMenuOpen && visualizerMenuRef.current && !visualizerMenuRef.current.contains(e.target as Node)) {
+        setIsVisualizerMenuOpen(false);
+      }
+      if (isScaleMenuOpen && scaleMenuRef.current && !scaleMenuRef.current.contains(e.target as Node)) {
+        setIsScaleMenuOpen(false);
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [isMoreMenuOpen]);
+  }, [isMoreMenuOpen, isVisualizerMenuOpen, isScaleMenuOpen]);
 
   // Extract Monet / ambient cover color
   useEffect(() => {
@@ -550,9 +396,15 @@ export function FullscreenPlayer() {
     if (currentTrack.palette) {
       const theme = extractMonetThemeFromPalette(currentTrack.palette);
       setCoverGlowRgb(theme.glowRgb);
+      if (theme.secondaryRgb) setCoverSecondaryRgb(theme.secondaryRgb);
+      if (theme.tertiaryRgb) setCoverTertiaryRgb(theme.tertiaryRgb);
+      if (theme.gradient) setCoverGradient(theme.gradient);
     } else if (currentTrack.cover_url) {
       extractMonetFromImage(currentTrack.cover_url).then((theme) => {
         setCoverGlowRgb(theme.glowRgb);
+        if (theme.secondaryRgb) setCoverSecondaryRgb(theme.secondaryRgb);
+        if (theme.tertiaryRgb) setCoverTertiaryRgb(theme.tertiaryRgb);
+        if (theme.gradient) setCoverGradient(theme.gradient);
       });
     }
   }, [currentTrack]);
@@ -656,24 +508,6 @@ export function FullscreenPlayer() {
     }
     return activeIdx;
   }, [lyricsInfo?.is_synced, parsedLyrics, effectiveSmoothTime]);
-
-  // Active line progress percentage (0.0 to 1.0) with audio-reactive vocal modulation
-  const activeLineProgress = useMemo(() => {
-    if (activeLyricIndex < 0 || activeLyricIndex >= parsedLyrics.length) return 0;
-    const currentLineTime = parsedLyrics[activeLyricIndex].time;
-    if (currentLineTime === undefined) return 0;
-
-    const nextLineTime =
-      activeLyricIndex < parsedLyrics.length - 1 && parsedLyrics[activeLyricIndex + 1].time !== undefined
-        ? parsedLyrics[activeLyricIndex + 1].time!
-        : currentLineTime + 4;
-
-    const lineDuration = Math.max(0.6, nextLineTime - currentLineTime);
-    const nominalFraction = Math.min(1, Math.max(0, (effectiveSmoothTime - currentLineTime) / lineDuration));
-
-    const vocalPush = (audioVocalEnergy - 0.28) * 0.04;
-    return Math.min(1, Math.max(0, nominalFraction + vocalPush));
-  }, [activeLyricIndex, parsedLyrics, effectiveSmoothTime, audioVocalEnergy]);
 
   const [syncButtonDirection, setSyncButtonDirection] = useState<'up' | 'down'>('up');
 
@@ -797,6 +631,14 @@ export function FullscreenPlayer() {
         e.preventDefault();
         e.stopImmediatePropagation();
 
+        if (isScaleMenuOpen) {
+          setIsScaleMenuOpen(false);
+          return;
+        }
+        if (isVisualizerMenuOpen) {
+          setIsVisualizerMenuOpen(false);
+          return;
+        }
         if (isMoreMenuOpen) {
           setIsMoreMenuOpen(false);
           return;
@@ -806,6 +648,36 @@ export function FullscreenPlayer() {
           return;
         }
         closeFullscreenPlayer();
+        return;
+      }
+
+      // Zoom hotkeys: Ctrl + Plus / Ctrl + Minus / Ctrl + 0
+      if (e.ctrlKey || e.metaKey) {
+        if (e.key === '=' || e.key === '+' || e.code === 'Equal' || e.code === 'NumpadAdd') {
+          e.preventDefault();
+          zoomIn();
+          return;
+        }
+        if (e.key === '-' || e.key === '_' || e.code === 'Minus' || e.code === 'NumpadSubtract') {
+          e.preventDefault();
+          zoomOut();
+          return;
+        }
+        if (e.key === '0' || e.code === 'Digit0' || e.code === 'Numpad0') {
+          e.preventDefault();
+          resetZoom();
+          return;
+        }
+      }
+
+      if (
+        e.key === 'v' || e.key === 'V' || e.key === 'м' || e.key === 'М' ||
+        e.key === 'b' || e.key === 'B' || e.key === 'и' || e.key === 'И'
+      ) {
+        if (['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement)?.tagName)) return;
+        e.preventDefault();
+        cycleBackdropMode();
+        return;
       }
     };
 
@@ -813,26 +685,46 @@ export function FullscreenPlayer() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [
     isFullscreenPlayerOpen,
+    isScaleMenuOpen,
+    isVisualizerMenuOpen,
     isMoreMenuOpen,
     qualityMenuOpen,
     closeFullscreenPlayer,
+    cycleBackdropMode,
+    zoomIn,
+    zoomOut,
+    resetZoom,
   ]);
 
   if (!isFullscreenPlayerOpen || !currentTrack) return null;
 
   const upcomingQueue = queue.slice(queueIndex + 1);
 
+  const effectiveScale = scale === 'auto' ? detectedScreen.baseScale : scale;
+
   return (
     <div
       className={`fullscreen-overlay ${isZenMode ? 'fullscreen-overlay--zen' : ''}`}
+      data-scale={scale === 'auto' ? 'auto' : 'custom'}
       style={
         {
           '--cover-glow-rgb': coverGlowRgb,
+          '--cover-secondary-rgb': coverSecondaryRgb,
+          '--cover-tertiary-rgb': coverTertiaryRgb,
+          '--cover-gradient': coverGradient,
+          '--fs-user-scale': effectiveScale,
+          '--fs-scale': effectiveScale,
         } as React.CSSProperties
       }
     >
-      {/* Dynamic ambient backdrop */}
-      <div className="fullscreen-overlay__ambient" />
+      {/* Living fluid dynamic audio-reactive backdrop */}
+      <FluidBackdropVisualizer
+        glowRgb={coverGlowRgb}
+        secondaryRgb={coverSecondaryRgb}
+        tertiaryRgb={coverTertiaryRgb}
+        isPlaying={isPlaying}
+        mode={backdropMode}
+      />
       <div className="fullscreen-overlay__vignette" />
 
       {/* Top Header */}
@@ -1017,6 +909,28 @@ export function FullscreenPlayer() {
                         Перейти к альбому
                       </button>
                     )}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsMoreMenuOpen(false);
+                        toggleDislikeTrack(currentTrack.id);
+                      }}
+                    >
+                      <DislikeIcon size={16} active={isDisliked} />
+                      {isDisliked ? 'Снять скрытие трека' : 'Не рекомендовать трек'}
+                    </button>
+                    {currentArtistId && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsMoreMenuOpen(false);
+                          toggleDislikeArtist(currentArtistId, currentTrack.artist);
+                        }}
+                      >
+                        <DislikeIcon size={16} active={isArtistDisliked} />
+                        {isArtistDisliked ? 'Разблокировать артиста' : 'Не рекомендовать артиста'}
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
@@ -1028,6 +942,25 @@ export function FullscreenPlayer() {
                 size={22}
                 title={isLiked ? 'Удалить из любимых (L)' : 'Добавить в любимое (L)'}
               />
+
+              {/* Dislike Button */}
+              <DislikeButton
+                isDisliked={isDisliked}
+                onToggle={() => toggleDislikeTrack(currentTrack.id)}
+                size={22}
+                title={isDisliked ? 'Снять отметку «Не нравится» (D)' : 'Не нравится / Скрыть (D)'}
+              />
+            </div>
+
+            <div
+              className="fullscreen-player-card__quality-row"
+              title={`Качество звука: ${audioDetails.fullSummary}`}
+            >
+              <span className="fullscreen-player-card__quality-meta">
+                {audioDetails.codec} • {audioDetails.codec === "FLAC"
+                  ? `${audioDetails.bitDepthText} / ${audioDetails.sampleRateText} • ${audioDetails.bitrateText}`
+                  : `${audioDetails.bitrateText} • ${audioDetails.sampleRateText}`}
+              </span>
             </div>
           </div>
 
@@ -1173,15 +1106,37 @@ export function FullscreenPlayer() {
               <div style={{ position: 'relative' }}>
                 <button
                   type="button"
-                  className={`fullscreen-quality-badge ${quality === 'flac' ? 'fullscreen-quality-badge--hifi' : ''}`}
+                  className={`fullscreen-quality-badge ${audioDetails.isHiRes
+                      ? 'fullscreen-quality-badge--hires'
+                      : audioDetails.badgeLabel === 'HiFi'
+                        ? 'fullscreen-quality-badge--hifi'
+                        : ''
+                    }`}
                   onClick={() => setQualityMenuOpen((p) => !p)}
-                  title="Качество звука"
+                  title={audioDetails.fullSummary}
                 >
-                  {quality === 'flac' ? 'HiFi' : quality === 'high' ? 'HQ' : 'SQ'}
+                  <span className="fullscreen-quality-badge__label">{audioDetails.badgeLabel}{audioDetails.badgeLabel === "HiFi" && <CrystalIcon size={10} className="quality-badge__crystal" />}</span>
                 </button>
 
                 {qualityMenuOpen && (
                   <div className="fullscreen-dropdown-menu fullscreen-dropdown-menu--right">
+                    <div className="fullscreen-dropdown-menu__header">
+                      <div className="fullscreen-dropdown-menu__title">Текущий поток</div>
+                      <div className="fullscreen-dropdown-menu__current-details">
+                        <span className={`quality-badge quality-badge--${audioDetails.isHiRes ? "hires" : audioDetails.badgeLabel === "HiFi" ? "hifi" : audioDetails.badgeLabel === "HQ" ? "hq" : "sq"}`}>
+                          {audioDetails.badgeLabel}{audioDetails.badgeLabel === "HiFi" && <CrystalIcon size={10} className="quality-badge__crystal" />}
+                        </span>
+                        <span>{audioDetails.codec}</span>
+                        <span>•</span>
+                        <span>{audioDetails.channelsText}</span>
+                      </div>
+                      <div className="fullscreen-dropdown-menu__meta">
+                        {audioDetails.codec === 'FLAC'
+                          ? `${audioDetails.bitDepthText} • ${audioDetails.sampleRateText} • ${audioDetails.bitrateText}`
+                          : `${audioDetails.bitrateText} • ${audioDetails.sampleRateText}`}
+                      </div>
+                    </div>
+                    <div className="fullscreen-dropdown-menu__divider" />
                     <button
                       type="button"
                       className={quality === 'flac' ? 'fullscreen-dropdown-menu__active' : ''}
@@ -1190,7 +1145,7 @@ export function FullscreenPlayer() {
                         setQualityMenuOpen(false);
                       }}
                     >
-                      HiFi • FLAC ~1411 кбит/с
+                      HiFi <CrystalIcon size={10} className="quality-badge__crystal" /> • FLAC Lossless
                     </button>
                     <button
                       type="button"
@@ -1210,7 +1165,7 @@ export function FullscreenPlayer() {
                         setQualityMenuOpen(false);
                       }}
                     >
-                      SQ • MP3 192 кбит/с
+                      SQ • MP3 128 кбит/с
                     </button>
                   </div>
                 )}
@@ -1397,6 +1352,9 @@ export function FullscreenPlayer() {
                       const isPast = activeLyricIndex >= 0 && idx < activeLyricIndex;
                       const isFuture = activeLyricIndex >= 0 && idx > activeLyricIndex;
                       const isSynced = line.time !== undefined;
+                      const isLinePast = line.isInstrumental
+                        ? effectiveSmoothTime >= (line.endTime ?? (line.time ?? 0) + 4)
+                        : isPast;
 
                       // Distance-based blur & focus depth (Apple Music style)
                       const distance = activeLyricIndex >= 0 ? Math.abs(idx - activeLyricIndex) : 0;
@@ -1420,11 +1378,14 @@ export function FullscreenPlayer() {
                               : isFuture
                                 ? 'fullscreen-lyric-line--future'
                                 : ''
-                            } ${isSynced ? 'fullscreen-lyric-line--clickable' : ''}`}
+                            } ${isSynced ? 'fullscreen-lyric-line--clickable' : ''} ${
+                              line.isInstrumental ? 'fullscreen-lyric-line--instrumental' : ''
+                            } ${
+                              line.isInstrumental && isLinePast ? 'fullscreen-lyric-line--instrumental-collapsed' : ''
+                            }`}
                           style={{
-                            '--line-fill': isActive ? `${(activeLineProgress * 100).toFixed(1)}%` : isPast ? '100%' : '0%',
-                            filter: isSynced ? `blur(${blurAmount}px)` : 'none',
-                            opacity: isSynced ? opacityAmount : 0.85,
+                            filter: isSynced && !line.isInstrumental ? `blur(${blurAmount}px)` : 'none',
+                            opacity: line.isInstrumental ? (isActive ? 1 : isLinePast ? 0 : 0.6) : isSynced ? opacityAmount : 0.85,
                           } as React.CSSProperties}
                           onClick={() => {
                             if (line.time !== undefined) {
@@ -1437,24 +1398,41 @@ export function FullscreenPlayer() {
                             }
                           }}
                         >
-                          {line.hasEnhancedTimings && line.words.length > 0 ? (
+                          {line.isInstrumental ? (
+                            <InstrumentalBreakIndicator
+                              time={line.time ?? 0}
+                              endTime={line.endTime ?? (line.time ?? 0) + 4}
+                              currentTime={effectiveSmoothTime}
+                              isActive={isActive}
+                              size="large"
+                            />
+                          ) : line.hasEnhancedTimings && line.words.length > 0 ? (
                             <span className="fullscreen-lyric-line__words">
                               {line.words.map((word, wIdx) => {
-                                const isWordPast = effectiveSmoothTime >= word.endTime;
-                                const isWordActive =
-                                  effectiveSmoothTime >= word.time && effectiveSmoothTime < word.endTime;
-                                const wordDuration = Math.max(0.06, word.endTime - word.time);
-                                const wordFill = isWordPast
-                                  ? 100
-                                  : isWordActive
-                                    ? Math.min(
+                                let isWordPast = false;
+                                let isWordActive = false;
+                                let wordFill = 0;
+
+                                if (isPast) {
+                                  isWordPast = true;
+                                } else if (isFuture) {
+                                  isWordPast = false;
+                                  isWordActive = false;
+                                } else {
+                                  isWordPast = effectiveSmoothTime >= word.endTime;
+                                  isWordActive =
+                                    effectiveSmoothTime >= word.time && effectiveSmoothTime < word.endTime;
+                                  if (isWordActive) {
+                                    const wordDuration = Math.max(0.06, word.endTime - word.time);
+                                    wordFill = Math.min(
                                       100,
                                       Math.max(
                                         0,
                                         ((effectiveSmoothTime - word.time) / wordDuration) * 100
                                       )
-                                    )
-                                    : 0;
+                                    );
+                                  }
+                                }
 
                                 return (
                                   <span
@@ -1465,7 +1443,11 @@ export function FullscreenPlayer() {
                                         ? 'fullscreen-lyric-word--past'
                                         : 'fullscreen-lyric-word--future'
                                       } ${!word.hasSpaceAfter ? 'fullscreen-lyric-word--no-space' : ''}`}
-                                    style={{ '--word-fill': `${wordFill.toFixed(1)}%` } as React.CSSProperties}
+                                    style={
+                                      isWordActive
+                                        ? ({ '--word-fill': `${wordFill.toFixed(1)}%` } as React.CSSProperties)
+                                        : undefined
+                                    }
                                   >
                                     <span className="fullscreen-lyric-word__inner">{word.text}</span>
                                   </span>
@@ -1528,7 +1510,7 @@ export function FullscreenPlayer() {
                   )}
                 </div>
                 <div className="fullscreen-queue-item__meta">
-                  <div className="fullscreen-queue-item__title">{currentTrack.title}</div>
+                  <div className="fullscreen-queue-item__title">{currentTrack.title}{currentTrack.has_flac && <span className="track-badge-hifi" title="HiFi Audio (Lossless)"><CrystalIcon size={11} /></span>}</div>
                   <div className="fullscreen-queue-item__artist">{currentTrack.artist}</div>
                 </div>
                 <div className="fullscreen-queue-item__playing-badge">
@@ -1551,7 +1533,7 @@ export function FullscreenPlayer() {
                       <div
                         key={`${track.id}-${actualIdx}`}
                         className="fullscreen-queue-item"
-                        onClick={() => setTrack(track)}
+                        onClick={() => playQueueTrack(actualIdx)}
                       >
                         <div className="fullscreen-queue-item__thumb">
                           {track.cover_url ? (
@@ -1561,7 +1543,7 @@ export function FullscreenPlayer() {
                           )}
                         </div>
                         <div className="fullscreen-queue-item__meta">
-                          <div className="fullscreen-queue-item__title">{track.title}</div>
+                          <div className="fullscreen-queue-item__title">{track.title}{track.has_flac && <span className="track-badge-hifi" title="HiFi Audio (Lossless)"><CrystalIcon size={11} /></span>}</div>
                           <div className="fullscreen-queue-item__artist">{track.artist}</div>
                         </div>
                         <div className="fullscreen-queue-item__duration">
@@ -1581,7 +1563,7 @@ export function FullscreenPlayer() {
         )}
       </main>
 
-      {/* Bottom Left Corner: Zen / Cinema mode toggle icon */}
+      {/* Bottom Left Corner: Zen / Cinema mode toggle icon & Visualizer toggle */}
       <footer className="fullscreen-overlay__footer">
         <button
           type="button"
@@ -1594,6 +1576,246 @@ export function FullscreenPlayer() {
             <circle cx="12" cy="12" r="3" />
           </svg>
         </button>
+
+        <div className="fullscreen-visualizer-picker" ref={visualizerMenuRef}>
+          <button
+            type="button"
+            className={`fullscreen-visualizer-toggle ${backdropMode !== 'off' ? 'fullscreen-visualizer-toggle--active' : ''}`}
+            onClick={() => setIsVisualizerMenuOpen((v) => !v)}
+            title={`Режим фона: ${backdropLabels[backdropMode].full} (Клик для выбора, B для быстрой смены)`}
+            aria-haspopup="menu"
+            aria-expanded={isVisualizerMenuOpen}
+          >
+            {backdropMode === 'lava' ? (
+              <svg className="fullscreen-visualizer-toggle__icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+                <path d="M12 2c-4 4-7 8.5-7 12a7 7 0 0 0 14 0c0-3.5-3-8-7-12z" />
+                <circle cx="12" cy="14" r="2.5" />
+              </svg>
+            ) : backdropMode === 'fluid' ? (
+              <svg className="fullscreen-visualizer-toggle__icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M2 8c4-4 8.5-4.5 12.5-0.5s5.5 4 7.5-0.5" />
+                <path d="M2 13.5c4-4.5 8.5-5 12.5-1s5.5 3.5 7.5-1" />
+                <path d="M3.5 19c3.5-3.5 7.5-4 11-1s5 2 7-0.8" opacity="0.55" />
+              </svg>
+            ) : (
+              <svg className="fullscreen-visualizer-toggle__icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="9" />
+                <line x1="5" y1="5" x2="19" y2="19" />
+              </svg>
+            )}
+            <span className="fullscreen-visualizer-toggle__label">
+              {backdropLabels[backdropMode].short}
+            </span>
+            <svg
+              className="fullscreen-visualizer-toggle__chevron"
+              width="10"
+              height="10"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              style={{
+                opacity: 0.6,
+                transform: isVisualizerMenuOpen ? 'rotate(180deg)' : 'none',
+                transition: 'transform 0.2s cubic-bezier(0.2, 0, 0, 1)',
+              }}
+            >
+              <polyline points="6 9 12 15 18 9" />
+            </svg>
+          </button>
+
+          {isVisualizerMenuOpen && (
+            <div className="fullscreen-visualizer-menu" role="menu">
+              <div className="fullscreen-visualizer-menu__header">
+                <span>ФОНОВЫЙ ВИЗУАЛИЗАТОР</span>
+                <span className="fullscreen-visualizer-menu__hint">HOTKEY: V</span>
+              </div>
+              <div className="fullscreen-visualizer-menu__list">
+                <button
+                  type="button"
+                  className={`fullscreen-visualizer-menu__item ${backdropMode === 'fluid' ? 'fullscreen-visualizer-menu__item--active' : ''}`}
+                  onClick={() => selectBackdropMode('fluid')}
+                >
+                  <div className="fullscreen-visualizer-menu__item-icon">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M2 8c4-4 8.5-4.5 12.5-0.5s5.5 4 7.5-0.5" />
+                      <path d="M2 13.5c4-4.5 8.5-5 12.5-1s5.5 3.5 7.5-1" />
+                      <path d="M3.5 19c3.5-3.5 7.5-4 11-1s5 2 7-0.8" opacity="0.55" />
+                    </svg>
+                  </div>
+                  <div className="fullscreen-visualizer-menu__item-content">
+                    <div className="fullscreen-visualizer-menu__item-title">Шёлк</div>
+                    <div className="fullscreen-visualizer-menu__item-desc">Струящиеся волны ткани и градиент</div>
+                  </div>
+                  {backdropMode === 'fluid' && (
+                    <div className="fullscreen-visualizer-menu__item-check">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                        <polyline points="20 6 9 17 4 12" />
+                      </svg>
+                    </div>
+                  )}
+                </button>
+
+                <button
+                  type="button"
+                  className={`fullscreen-visualizer-menu__item ${backdropMode === 'lava' ? 'fullscreen-visualizer-menu__item--active' : ''}`}
+                  onClick={() => selectBackdropMode('lava')}
+                >
+                  <div className="fullscreen-visualizer-menu__item-icon">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+                      <path d="M12 2c-4 4-7 8.5-7 12a7 7 0 0 0 14 0c0-3.5-3-8-7-12z" />
+                      <circle cx="12" cy="14" r="2.5" />
+                    </svg>
+                  </div>
+                  <div className="fullscreen-visualizer-menu__item-content">
+                    <div className="fullscreen-visualizer-menu__item-title">Лава-лампа</div>
+                    <div className="fullscreen-visualizer-menu__item-desc">Плавающие капли воска и метаболлы</div>
+                  </div>
+                  {backdropMode === 'lava' && (
+                    <div className="fullscreen-visualizer-menu__item-check">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                        <polyline points="20 6 9 17 4 12" />
+                      </svg>
+                    </div>
+                  )}
+                </button>
+
+                <button
+                  type="button"
+                  className={`fullscreen-visualizer-menu__item ${backdropMode === 'off' ? 'fullscreen-visualizer-menu__item--active' : ''}`}
+                  onClick={() => selectBackdropMode('off')}
+                >
+                  <div className="fullscreen-visualizer-menu__item-icon">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                      <circle cx="12" cy="12" r="9" />
+                      <line x1="5" y1="5" x2="19" y2="19" />
+                    </svg>
+                  </div>
+                  <div className="fullscreen-visualizer-menu__item-content">
+                    <div className="fullscreen-visualizer-menu__item-title">Статика</div>
+                    <div className="fullscreen-visualizer-menu__item-desc">Выключить анимацию фона</div>
+                  </div>
+                  {backdropMode === 'off' && (
+                    <div className="fullscreen-visualizer-menu__item-check">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                        <polyline points="20 6 9 17 4 12" />
+                      </svg>
+                    </div>
+                  )}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Scale / Screen Resolution Selector */}
+        <div className="fullscreen-scale-picker" ref={scaleMenuRef}>
+          <button
+            type="button"
+            className={`fullscreen-scale-toggle ${scale !== 'auto' ? 'fullscreen-scale-toggle--active' : ''}`}
+            onClick={() => setIsScaleMenuOpen((s) => !s)}
+            title={`Масштаб интерфейса: ${scale === 'auto' ? `Авто (${detectedScreen.percentageText})` : `${Math.round((scale as number) * 100)}%`} (Клик для выбора, Ctrl +/- для масштабирования)`}
+            aria-haspopup="menu"
+            aria-expanded={isScaleMenuOpen}
+          >
+            <svg
+              className="fullscreen-scale-toggle__icon"
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.8"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <rect x="2" y="3" width="20" height="14" rx="2" />
+              <line x1="8" y1="21" x2="16" y2="21" />
+              <line x1="12" y1="17" x2="12" y2="21" />
+              <polyline points="7 9 10 9 10 12" />
+              <polyline points="17 11 14 11 14 8" />
+            </svg>
+            <span className="fullscreen-scale-toggle__label">
+              {scale === 'auto' ? `Авто (${detectedScreen.percentageText})` : `${Math.round((scale as number) * 100)}%`}
+            </span>
+            <svg
+              className="fullscreen-scale-toggle__chevron"
+              width="10"
+              height="10"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              style={{
+                opacity: 0.6,
+                transform: isScaleMenuOpen ? 'rotate(180deg)' : 'none',
+                transition: 'transform 0.2s cubic-bezier(0.2, 0, 0, 1)',
+              }}
+            >
+              <polyline points="6 9 12 15 18 9" />
+            </svg>
+          </button>
+
+          {isScaleMenuOpen && (
+            <div className="fullscreen-scale-menu" role="menu">
+              <div className="fullscreen-scale-menu__header">
+                <span>Масштаб под разрешение</span>
+                <span className="fullscreen-scale-menu__hint">Ctrl +/-</span>
+              </div>
+              <div className="fullscreen-scale-menu__list">
+                {SCALE_OPTIONS.map((opt) => {
+                  const isActive = scale === opt.value;
+                  const isAuto = opt.value === 'auto';
+                  return (
+                    <button
+                      key={String(opt.value)}
+                      type="button"
+                      className={`fullscreen-scale-menu__item ${isActive ? 'fullscreen-scale-menu__item--active' : ''}`}
+                      onClick={() => {
+                        setScale(opt.value);
+                        setIsScaleMenuOpen(false);
+                      }}
+                    >
+                      <div className="fullscreen-scale-menu__item-badge">
+                        {isAuto ? 'AUTO' : opt.label}
+                      </div>
+                      <div className="fullscreen-scale-menu__item-content">
+                        <div className="fullscreen-scale-menu__item-title">
+                          {isAuto ? `Автоматически (${detectedScreen.category})` : opt.label}
+                        </div>
+                        <div className="fullscreen-scale-menu__item-desc">
+                          {isAuto
+                            ? `Определено: ${detectedScreen.percentageText} (${windowDimensions.width}×${windowDimensions.height})`
+                            : opt.desc}
+                        </div>
+                      </div>
+                      {isActive && (
+                        <div className="fullscreen-scale-menu__item-check">
+                          <svg
+                            width="16"
+                            height="16"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2.5"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          >
+                            <polyline points="20 6 9 17 4 12" />
+                          </svg>
+                        </div>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
       </footer>
     </div>
   );

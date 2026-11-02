@@ -11,6 +11,7 @@ import { useAudioReactive } from '../../player/useAudioReactive';
 import { LikeButton } from '../../../components/LikeButton';
 import { HeartIcon } from '../../../components/HeartIcon';
 import { ShareIcon } from '../../../components/ShareIcon';
+import { CrystalIcon } from '../../../components/CrystalIcon';
 import { showToast } from '../../../components/Toast';
 
 function formatFollowersCount(count: number): string {
@@ -349,6 +350,8 @@ export function ArtistDetailPage() {
       style={{
         '--artist-glow-rgb': monetTheme.glowRgb,
         '--artist-secondary-rgb': monetTheme.secondaryRgb,
+        '--artist-tertiary-rgb': monetTheme.tertiaryRgb,
+        '--artist-gradient': monetTheme.gradient,
         '--artist-accent-color': monetTheme.accentColor,
       } as React.CSSProperties}
     >
@@ -665,7 +668,7 @@ export function ArtistDetailPage() {
                           <span className="track-badge-e" title="Explicit">E</span>
                         )}
                         {track.has_flac && (
-                          <span className="track-badge-hifi" title="HiFi Audio">HiFi</span>
+                          <span className="track-badge-hifi" title="HiFi Audio (Lossless)"><CrystalIcon size={13} /></span>
                         )}
                       </div>
                       <div className="artist-track-artist">
@@ -743,7 +746,7 @@ export function ArtistDetailPage() {
                             <span className="track-badge-e" title="Explicit">E</span>
                           )}
                           {track.has_flac && (
-                            <span className="track-badge-hifi" title="HiFi Audio">HiFi</span>
+                            <span className="track-badge-hifi" title="HiFi Audio (Lossless)"><CrystalIcon size={13} /></span>
                           )}
                         </div>
                         <div className="artist-track-artist">

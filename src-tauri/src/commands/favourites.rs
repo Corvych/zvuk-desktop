@@ -100,3 +100,55 @@ pub async fn unlike_artist(
 ) -> Result<(), AppError> {
     state.api_client.unlike_artist(artist_id).await
 }
+
+/// Get all disliked / hidden track IDs.
+#[tauri::command]
+pub async fn get_disliked_track_ids(
+    state: State<'_, AppState>,
+) -> Result<Vec<i64>, AppError> {
+    state.api_client.get_disliked_track_ids().await
+}
+
+/// Get all disliked / hidden artist IDs.
+#[tauri::command]
+pub async fn get_disliked_artist_ids(
+    state: State<'_, AppState>,
+) -> Result<Vec<i64>, AppError> {
+    state.api_client.get_disliked_artist_ids().await
+}
+
+/// Dislike (hide) a track.
+#[tauri::command]
+pub async fn dislike_track(
+    track_id: i64,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
+    state.api_client.dislike_track(track_id).await
+}
+
+/// Remove dislike (unhide) from a track.
+#[tauri::command]
+pub async fn undislike_track(
+    track_id: i64,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
+    state.api_client.undislike_track(track_id).await
+}
+
+/// Dislike (hide) an artist.
+#[tauri::command]
+pub async fn dislike_artist(
+    artist_id: i64,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
+    state.api_client.dislike_artist(artist_id).await
+}
+
+/// Remove dislike (unhide) from an artist.
+#[tauri::command]
+pub async fn undislike_artist(
+    artist_id: i64,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
+    state.api_client.undislike_artist(artist_id).await
+}

@@ -59,6 +59,9 @@ export interface StreamInfo {
   bitrate: number | null;
   is_drm: boolean;
   license_url: string | null;
+  sample_rate?: number | null;
+  bit_depth?: number | null;
+  channels?: number | null;
 }
 
 export interface Album {
@@ -262,6 +265,9 @@ export const getSubscription = () =>
 export const logout = () =>
   invoke<void>('logout');
 
+export const resetSberIdSession = () =>
+  invoke<void>('reset_sber_id_session');
+
 // Tracks, Albums & Artists
 export const getTrack = (id: number) =>
   invoke<Track>('get_track', { id });
@@ -383,6 +389,25 @@ export const likeArtist = (artistId: number) =>
 
 export const unlikeArtist = (artistId: number) =>
   invoke<void>('unlike_artist', { artistId });
+
+// Dislikes / Hidden Collection
+export const getDislikedTrackIds = () =>
+  invoke<number[]>('get_disliked_track_ids');
+
+export const getDislikedArtistIds = () =>
+  invoke<number[]>('get_disliked_artist_ids');
+
+export const dislikeTrack = (trackId: number) =>
+  invoke<void>('dislike_track', { trackId });
+
+export const undislikeTrack = (trackId: number) =>
+  invoke<void>('undislike_track', { trackId });
+
+export const dislikeArtist = (artistId: number) =>
+  invoke<void>('dislike_artist', { artistId });
+
+export const undislikeArtist = (artistId: number) =>
+  invoke<void>('undislike_artist', { artistId });
 
 // Recommendations / Sound Energy / Personal Wave
 export const getPersonalWave = (
@@ -507,6 +532,24 @@ export const updateTaskbarPlayback = (isPlaying: boolean, canPrev: boolean, canN
 
 export const downloadAndInstallUpdate = (url: string, filename?: string) =>
   invoke<void>('download_and_install_update', { url, filename });
+
+/**
+ * Generic proxy request via Tauri native backend to bypass browser CORS restrictions.
+ */
+export async function fetchProxy(
+  url: string,
+  headers?: Record<string, string>,
+): Promise<string> {
+  if (isTauri()) {
+    return invoke<string>('fetch_proxy', { url, headers });
+  }
+  const res = await fetch(url, { headers });
+  if (!res.ok) {
+    throw new Error(`HTTP error ${res.status}`);
+  }
+  return res.text();
+}
+
 
 
 

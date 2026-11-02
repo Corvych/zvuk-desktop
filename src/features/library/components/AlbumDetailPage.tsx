@@ -8,6 +8,7 @@ import { LikeButton } from '../../../components/LikeButton';
 import { HeartIcon } from '../../../components/HeartIcon';
 import { ShareIcon } from '../../../components/ShareIcon';
 import { showToast } from '../../../components/Toast';
+import { CrystalIcon } from '../../../components/CrystalIcon';
 import { usePlaylistModalStore } from '../../playlists/playlistModalStore';
 
 
@@ -322,7 +323,7 @@ export function AlbumDetailPage() {
                               <span className="track-badge-e" title="Explicit content">E</span>
                             )}
                             {track.has_flac && (
-                              <span className="track-badge-hifi" title="HiFi Audio">HiFi</span>
+                              <span className="track-badge-hifi" title="HiFi Audio (Lossless)"><CrystalIcon size={13} /></span>
                             )}
                           </div>
                           <div className="detail-track-artist">
