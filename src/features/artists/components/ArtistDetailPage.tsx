@@ -1,6 +1,6 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { getArtist, getAlbum, getArtistRadio, getArtistReleases, type ArtistDetail, type ArtistRelease } from '../../../api';
+import { getArtist, getAlbum, getArtistRadio, getArtistReleases, getCoverUrl, type ArtistDetail, type ArtistRelease } from '../../../api';
 
 import { usePlayerStore } from '../../player/playerStore';
 import { useFavouritesStore } from '../../favourites/favouritesStore';
@@ -40,9 +40,47 @@ export function ArtistDetailPage() {
   const [hasMoreReleases, setHasMoreReleases] = useState(false);
   const [endCursor, setEndCursor] = useState<string | null>(null);
   const [loadingMoreReleases, setLoadingMoreReleases] = useState(false);
+  const bioRef = useRef<HTMLParagraphElement>(null);
   const [bioExpanded, setBioExpanded] = useState(false);
+  const [hasBioOverflow, setHasBioOverflow] = useState(false);
   const [radioLoading, setRadioLoading] = useState(false);
   const [showAllPopular, setShowAllPopular] = useState(false);
+
+  // Reset bio state when switching artists
+  useEffect(() => {
+    setBioExpanded(false);
+    setHasBioOverflow(false);
+  }, [id]);
+
+  // Accurately detect if the bio text actually exceeds the 4 clamped lines
+  useEffect(() => {
+    const el = bioRef.current;
+    if (!el || !artist?.description) return;
+
+    const checkOverflow = () => {
+      // Only measure when collapsed; when expanded, scrollHeight equals clientHeight
+      if (!bioExpanded) {
+        const isClamped = el.scrollHeight > el.clientHeight + 1;
+        setHasBioOverflow(isClamped);
+      }
+    };
+
+    checkOverflow();
+    const rafId = requestAnimationFrame(checkOverflow);
+
+    let ro: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== 'undefined') {
+      ro = new ResizeObserver(() => {
+        checkOverflow();
+      });
+      ro.observe(el);
+    }
+
+    return () => {
+      cancelAnimationFrame(rafId);
+      if (ro) ro.disconnect();
+    };
+  }, [artist?.description, bioExpanded]);
 
   const [monetTheme, setMonetTheme] = useState<MonetTheme>(() =>
     extractMonetThemeFromPalette(null)
@@ -116,6 +154,21 @@ export function ArtistDetailPage() {
     }
   }, [artist?.imageUrl, artist?.palette]);
 
+  // Synchronize artist palette with root document
+  useEffect(() => {
+    if (!monetTheme) return;
+    const root = document.documentElement;
+    root.style.setProperty('--artist-glow-rgb', monetTheme.glowRgb);
+    root.style.setProperty('--artist-secondary-rgb', monetTheme.secondaryRgb);
+    root.style.setProperty('--artist-tertiary-rgb', monetTheme.tertiaryRgb);
+
+    return () => {
+      root.style.removeProperty('--artist-glow-rgb');
+      root.style.removeProperty('--artist-secondary-rgb');
+      root.style.removeProperty('--artist-tertiary-rgb');
+    };
+  }, [monetTheme]);
+
   // Check if artist is currently playing
   const isArtistInCurrentTrack = Boolean(
     isPlaying &&
@@ -161,6 +214,125 @@ export function ArtistDetailPage() {
     }
     return covers;
   }, [artist, releases]);
+
+  // Desktop Hero Top Album Card
+  const renderTopAlbumCard = (variantClass: string) => {
+    if (!topAlbum) return null;
+
+    return (
+      <div
+        className={`artist-top-album-card ${variantClass}`}
+        onClick={() => navigate(`/album/${topAlbum.id}`)}
+      >
+        <LikeButton
+          className="artist-top-album-card__like-btn"
+          isLiked={isAlbumLiked(topAlbum.id)}
+          onToggle={() => toggleLikeAlbum(topAlbum.id)}
+          title={isAlbumLiked(topAlbum.id) ? 'Удалить альбом из любимых' : 'Добавить альбом в любимое'}
+          size={18}
+        />
+
+        <div className="artist-top-album-card__label">ТОП АЛЬБОМ</div>
+        <div className="artist-top-album-card__title" title={topAlbum.title}>
+          {topAlbum.title}
+        </div>
+
+        <div className="artist-top-album-card__cover">
+          {topAlbum.coverUrl ? (
+            <img src={topAlbum.coverUrl} alt={topAlbum.title} />
+          ) : (
+            <div className="artist-top-album-card__fallback">💿</div>
+          )}
+          <button
+            className="card__play-btn card__play-overlay"
+            title="Воспроизвести альбом"
+            onClick={(e) => handlePlayRelease(e, topAlbum)}
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M8 5v14l11-7z" />
+            </svg>
+          </button>
+        </div>
+      </div>
+    );
+  };
+
+  // Narrow Window Top Album Banner (Full width, integrated artwork background with vignette, no card border)
+  const renderNarrowTopAlbumBanner = () => {
+    if (!topAlbum) return null;
+    const year = topAlbum.date ? new Date(topAlbum.date).getFullYear() : null;
+    const typeLabel =
+      topAlbum.releaseType === 'single'
+        ? 'Сингл'
+        : topAlbum.releaseType === 'ep'
+        ? 'EP'
+        : 'Альбом';
+    const coverSrc = topAlbum.coverUrl ? getCoverUrl(topAlbum.coverUrl, 'large') : null;
+
+    return (
+      <section className="artist-top-album-section--narrow mb-xl">
+        <div
+          className="artist-top-album-banner--narrow"
+          onClick={() => navigate(`/album/${topAlbum.id}`)}
+        >
+          {/* Integrated backdrop artwork with ambient glow & vignette */}
+          <div className="artist-top-album-banner__backdrop" aria-hidden="true">
+            {coverSrc && (
+              <>
+                <div className="artist-top-album-banner__glow" />
+                <img
+                  src={coverSrc}
+                  alt=""
+                  className="artist-top-album-banner__bg-img"
+                />
+                <div className="artist-top-album-banner__vignette" />
+              </>
+            )}
+          </div>
+
+          {/* Content overlay */}
+          <div className="artist-top-album-banner__content">
+            <div className="artist-top-album-banner__tag">
+              <span>ТОП АЛЬБОМ</span>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M9 18L15 12L9 6" />
+              </svg>
+            </div>
+
+            <h3 className="artist-top-album-banner__title" title={topAlbum.title}>
+              {topAlbum.title}
+            </h3>
+
+            <div className="artist-top-album-banner__meta">
+              <span>{typeLabel}</span>
+              {year && !isNaN(year) ? <span> • {year}</span> : null}
+            </div>
+
+            <div className="artist-top-album-banner__actions" onClick={(e) => e.stopPropagation()}>
+              <button
+                className="artist-top-album-banner__play-btn"
+                title="Воспроизвести альбом"
+                onClick={(e) => handlePlayRelease(e, topAlbum)}
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M8 5v14l11-7z" />
+                </svg>
+                <span>Слушать</span>
+              </button>
+
+              <LikeButton
+                className="artist-top-album-banner__like-btn"
+                isLiked={isAlbumLiked(topAlbum.id)}
+                onToggle={() => toggleLikeAlbum(topAlbum.id)}
+                title={isAlbumLiked(topAlbum.id) ? 'Удалить альбом из любимых' : 'Добавить альбом в любимое'}
+                size={20}
+              />
+            </div>
+          </div>
+        </div>
+      </section>
+    );
+  };
 
   const popularTracks = artist?.popularTracks || [];
   const displayedCount = showAllPopular ? popularTracks.length : Math.min(12, popularTracks.length);
@@ -355,6 +527,43 @@ export function ArtistDetailPage() {
         '--artist-accent-color': monetTheme.accentColor,
       } as React.CSSProperties}
     >
+      {/* ─── Artist Backdrop Photo (Frameless Right-Flank Background Bleed with Vignette) ─── */}
+      {artist.imageUrl && (
+        <div className="artist-backdrop" aria-hidden="true">
+          {/* Audio-reactive glow along the edge of the vignette in the colors of the displayed rim */}
+          <div
+            className={`artist-backdrop__glow ${isArtistInCurrentTrack ? 'artist-backdrop__glow--reactive' : ''}`}
+          >
+            {/* 1. Volumetric diffuse aura in artist palette colors */}
+            <div className="artist-backdrop__glow-outer" />
+
+            {/* 2. Exact chromatic rim glow using the actual photo colors along the vignette boundary */}
+            <div className="artist-backdrop__glow-chromatic">
+              <img
+                src={getCoverUrl(artist.imageUrl, 'large')}
+                alt=""
+                className="artist-backdrop__glow-chromatic-img"
+              />
+            </div>
+
+            {/* 3. High-definition chromatic halo hugging the vignette contour */}
+            <div className="artist-backdrop__glow-rim" />
+
+            {/* 4. Soft inner edge backlight */}
+            <div className="artist-backdrop__glow-inner" />
+          </div>
+
+          <div className="artist-backdrop__photo-wrap">
+            <img
+              src={getCoverUrl(artist.imageUrl, 'large')}
+              alt=""
+              className="artist-backdrop__img"
+            />
+            <div className="artist-backdrop__vignette" />
+          </div>
+        </div>
+      )}
+
       {/* Back button */}
       <button className="detail-back-btn" onClick={() => navigate(-1)} title="Вернуться назад">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
@@ -387,18 +596,37 @@ export function ArtistDetailPage() {
 
             {artist.description && (
               <div className="artist-hero__bio">
-                <p className={`artist-hero__bio-text ${bioExpanded ? 'artist-hero__bio-text--expanded' : ''}`}>
+                <p
+                  ref={bioRef}
+                  className={`artist-hero__bio-text ${bioExpanded ? 'artist-hero__bio-text--expanded' : ''}`}
+                >
                   {artist.description}
-                  {artist.description.length > 140 && (
-                    <button
-                      type="button"
-                      className="artist-hero__bio-toggle"
-                      onClick={() => setBioExpanded((v) => !v)}
-                    >
-                      {bioExpanded ? 'Свернуть' : 'Развернуть'}
-                    </button>
-                  )}
                 </p>
+                {hasBioOverflow && (
+                  <button
+                    type="button"
+                    className="artist-hero__bio-toggle"
+                    onClick={() => setBioExpanded((v) => !v)}
+                  >
+                    <span>{bioExpanded ? 'Свернуть' : 'Развернуть'}</span>
+                    <svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      style={{
+                        transform: bioExpanded ? 'rotate(180deg)' : 'none',
+                        transition: 'transform 0.2s ease',
+                      }}
+                    >
+                      <path d="M6 9l6 6 6-6" />
+                    </svg>
+                  </button>
+                )}
               </div>
             )}
           </div>
@@ -469,68 +697,8 @@ export function ArtistDetailPage() {
           </div>
         </div>
 
-        {/* Middle Column: Top Album Card */}
-        {topAlbum && (
-          <div
-            className="artist-top-album-card"
-            onClick={() => navigate(`/album/${topAlbum.id}`)}
-          >
-            <LikeButton
-              className="artist-top-album-card__like-btn"
-              isLiked={isAlbumLiked(topAlbum.id)}
-              onToggle={() => toggleLikeAlbum(topAlbum.id)}
-              title={isAlbumLiked(topAlbum.id) ? 'Удалить альбом из любимых' : 'Добавить альбом в любимое'}
-              size={18}
-            />
-
-            <div className="artist-top-album-card__label">ТОП АЛЬБОМ</div>
-            <div className="artist-top-album-card__title" title={topAlbum.title}>
-              {topAlbum.title}
-            </div>
-
-            <div className="artist-top-album-card__cover">
-              {topAlbum.coverUrl ? (
-                <img src={topAlbum.coverUrl} alt={topAlbum.title} />
-              ) : (
-                <div className="artist-top-album-card__fallback">💿</div>
-              )}
-              <button
-                className="card__play-btn card__play-overlay"
-                title="Воспроизвести альбом"
-                onClick={(e) => handlePlayRelease(e, topAlbum)}
-              >
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M8 5v14l11-7z" />
-                </svg>
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Right Column: Avatar Photo with Audio-Reactive Glow Behind It */}
-        <div className="artist-hero__avatar-col">
-          {/* Volumetric glow in the color of the avatar */}
-          <div
-            className={`artist-avatar-glow ${isArtistInCurrentTrack ? 'artist-avatar-glow--reactive' : ''}`}
-            aria-hidden="true"
-          >
-            <div className="artist-avatar-glow__outer" />
-            <div className="artist-avatar-glow__inner" />
-          </div>
-
-          {/* Rounded rectangular photo */}
-          <div className="artist-hero__avatar-frame">
-            {artist.imageUrl ? (
-              <img
-                src={artist.imageUrl}
-                alt={artist.title}
-                className="artist-hero__avatar-img"
-              />
-            ) : (
-              <div className="artist-hero__avatar-fallback">👤</div>
-            )}
-          </div>
-        </div>
+        {/* Middle Column: Top Album Card (Shown on wide desktop) */}
+        {renderTopAlbumCard('artist-top-album-card--hero')}
       </div>
 
       {/* ─── "Поток по артисту" Banner ──────────────────────────────────────── */}
@@ -661,7 +829,7 @@ export function ArtistDetailPage() {
 
                     <div className="artist-track-info">
                       <div className="artist-track-title">
-                        <span className={isCurrent ? 'text-accent' : ''}>
+                        <span className={`artist-track-title__text ${isCurrent ? 'text-accent' : ''}`}>
                           {track.title}
                         </span>
                         {track.is_explicit && (
@@ -739,7 +907,7 @@ export function ArtistDetailPage() {
 
                       <div className="artist-track-info">
                         <div className="artist-track-title">
-                          <span className={isCurrent ? 'text-accent' : ''}>
+                          <span className={`artist-track-title__text ${isCurrent ? 'text-accent' : ''}`}>
                             {track.title}
                           </span>
                           {track.is_explicit && (
@@ -809,6 +977,9 @@ export function ArtistDetailPage() {
           )}
         </section>
       )}
+
+      {/* ─── Top Album (Shown on narrow window under Popular Tracks, before Discography) ─── */}
+      {renderNarrowTopAlbumBanner()}
 
       {/* ─── Discography / Releases ─────────────────────────────────────────── */}
       {releases.length > 0 && (

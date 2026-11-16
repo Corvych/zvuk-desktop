@@ -10,12 +10,14 @@ import { LikeButton } from '../../../components/LikeButton';
 import { DislikeButton } from '../../../components/DislikeButton';
 import { DislikeIcon } from '../../../components/DislikeIcon';
 import { useDislikesStore } from '../../dislikes/dislikesStore';
-import { ShareIcon } from '../../../components/ShareIcon';
+import { ShareTrackMenuItem } from '../../../components/ShareTrackMenuItem';
 import { fetchUnifiedLyrics, probeAllSources } from '../lyricsService';
 import { useVolumeWheel } from '../useVolumeWheel';
 import { usePlaylistModalStore } from '../../playlists/playlistModalStore';
 import { getAudioQualityDetails } from '../../../lib/audioQuality';
 import { CrystalIcon } from '../../../components/CrystalIcon';
+import { SberCastButton } from '../../sbercast/components/SberCastButton';
+import { useSberCastStore } from '../../sbercast/sbercastStore';
 
 
 const QUALITY_LIST: { id: AudioQuality; badge: string; label: string; desc: string }[] = [
@@ -25,6 +27,7 @@ const QUALITY_LIST: { id: AudioQuality; badge: string; label: string; desc: stri
 ];
 
 export function PlayerBar() {
+  const isSberCastConnected = useSberCastStore((s) => s.isConnected);
   const {
     currentTrack,
     isPlaying,
@@ -48,6 +51,7 @@ export function PlayerBar() {
     streamInfo,
     sidePanelTab,
     toggleSidePanel,
+    startTrackRadio,
   } = usePlayerStore();
 
   const navigate = useNavigate();
@@ -143,17 +147,19 @@ export function PlayerBar() {
                   artistName={currentTrack.artist}
                 />
               </div>
-              <div
-                className="player-bar__quality"
-                onClick={() => setShowQualityMenu((prev) => !prev)}
-                title={`Качество звука: ${audioDetails.fullSummary}`}
-              >
-                <span className="player-bar__quality-meta">
-                  {audioDetails.codec === 'FLAC'
-                    ? `${audioDetails.bitDepthText} / ${audioDetails.sampleRateText} • ${audioDetails.bitrateText}`
-                    : `${audioDetails.bitrateText} • ${audioDetails.sampleRateText}`}
-                </span>
-              </div>
+              {!isSberCastConnected && (
+                <div
+                  className="player-bar__quality"
+                  onClick={() => setShowQualityMenu((prev) => !prev)}
+                  title={`Качество звука: ${audioDetails.fullSummary}`}
+                >
+                  <span className="player-bar__quality-meta">
+                    {audioDetails.codec === 'FLAC'
+                      ? `${audioDetails.bitDepthText} / ${audioDetails.sampleRateText} • ${audioDetails.bitrateText}`
+                      : `${audioDetails.bitrateText} • ${audioDetails.sampleRateText}`}
+                  </span>
+                </div>
+              )}
             </div>
 
 
@@ -191,40 +197,23 @@ export function PlayerBar() {
                     type="button"
                     onClick={() => {
                       setIsMoreMenuOpen(false);
-                      navigator.clipboard.writeText(`https://zvuk.com/track/${currentTrack.id}`);
-                      showToast('Ссылка на трек скопирована', 'success');
+                      startTrackRadio(currentTrack);
+                      showToast(`Запущен поток в стиле «${currentTrack.title}»`, 'info');
                     }}
                   >
-                    <ShareIcon size={16} />
-                    Поделиться треком
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9" />
+                      <path d="M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.5" />
+                      <circle cx="12" cy="12" r="2" fill="currentColor" />
+                      <path d="M16.2 7.8c2.3 2.3 2.3 6.1 0 8.5" />
+                      <path d="M19.1 4.9C23 8.8 23 15.2 19.1 19.1" />
+                    </svg>
+                    Поток по треку
                   </button>
-                  {currentTrack.album_id && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setIsMoreMenuOpen(false);
-                        navigator.clipboard.writeText(`https://zvuk.com/release/${currentTrack.album_id}`);
-                        showToast('Ссылка на альбом скопирована', 'success');
-                      }}
-                    >
-                      <ShareIcon size={16} />
-                      Поделиться альбомом
-                    </button>
-                  )}
-                  {(currentTrack.artist_id || currentTrack.artists?.[0]?.id) && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setIsMoreMenuOpen(false);
-                        const aId = currentTrack.artist_id ?? currentTrack.artists?.[0]?.id;
-                        navigator.clipboard.writeText(`https://zvuk.com/artist/${aId}`);
-                        showToast('Ссылка на артиста скопирована', 'success');
-                      }}
-                    >
-                      <ShareIcon size={16} />
-                      Поделиться артистом
-                    </button>
-                  )}
+                  <ShareTrackMenuItem
+                    track={currentTrack}
+                    onClose={() => setIsMoreMenuOpen(false)}
+                  />
                   <button
                     type="button"
                     onClick={() => {
@@ -361,93 +350,110 @@ export function PlayerBar() {
       {/* Right: Volume & Extras */}
       <div className="player-bar__right">
         {/* Quality Switcher */}
-        <div className="player-quality-container" ref={qualityMenuRef}>
-          <button
-            type="button"
-            className={`quality-badge-btn quality-badge-btn--${
-              audioDetails.isHiRes
-                ? 'hires'
-                : audioDetails.badgeLabel === 'HiFi'
-                ? 'hifi'
-                : audioDetails.badgeLabel === 'HQ'
-                ? 'hq'
-                : 'sq'
-            } ${showQualityMenu ? 'quality-badge-btn--active' : ''}`}
-            onClick={() => setShowQualityMenu((prev) => !prev)}
-            title={`Качество звука: ${audioDetails.fullSummary}`}
-            aria-label="Выбор качества звука"
-          >
-            {audioDetails.badgeLabel}
-            {audioDetails.badgeLabel === 'HiFi' && (
-              <CrystalIcon size={10} className="quality-badge__crystal" />
-            )}
-          </button>
+        {!isSberCastConnected && (
+          <div className="player-quality-container" ref={qualityMenuRef}>
+            <button
+              type="button"
+              className={`quality-badge-btn quality-badge-btn--${
+                audioDetails.isHiRes
+                  ? 'hires'
+                  : audioDetails.badgeLabel === 'HiFi'
+                  ? 'hifi'
+                  : audioDetails.badgeLabel === 'HQ'
+                  ? 'hq'
+                  : 'sq'
+              } ${showQualityMenu ? 'quality-badge-btn--active' : ''}`}
+              onClick={() => setShowQualityMenu((prev) => !prev)}
+              title={`Качество звука: ${audioDetails.fullSummary}`}
+              aria-label="Выбор качества звука"
+            >
+              {audioDetails.badgeLabel}
+              {audioDetails.badgeLabel === 'HiFi' && (
+                <CrystalIcon size={10} className="quality-badge__crystal" />
+              )}
+            </button>
 
-          {showQualityMenu && (
-            <div className="quality-menu">
-              <div className="quality-menu__header">Качество звука</div>
-              <div className="quality-menu__list">
-                {QUALITY_LIST.map((item) => {
-                  const isSelected = quality === item.id;
-                  return (
-                    <button
-                      key={item.id}
-                      type="button"
-                      className={`quality-menu__item ${isSelected ? 'quality-menu__item--active' : ''}`}
-                      onClick={() => {
-                        if (quality !== item.id) {
-                          setQuality(item.id);
-                          showToast(`Качество ${item.badge} применится со следующего трека`, 'info');
-                        }
-                        setShowQualityMenu(false);
-                      }}
-                    >
-                      <span
-                        className={`quality-badge quality-badge--${
-                          item.id === 'flac' ? 'hifi' : item.id === 'high' ? 'hq' : 'sq'
-                        }`}
+            {showQualityMenu && (
+              <div className="quality-menu">
+                <div className="quality-menu__header">Качество звука</div>
+                <div className="quality-menu__list">
+                  {QUALITY_LIST.map((item) => {
+                    const isSelected = quality === item.id;
+                    return (
+                      <button
+                        key={item.id}
+                        type="button"
+                        className={`quality-menu__item ${isSelected ? 'quality-menu__item--active' : ''}`}
+                        onClick={() => {
+                          if (quality !== item.id) {
+                            setQuality(item.id);
+                            showToast(`Качество ${item.badge} применится со следующего трека`, 'info');
+                          }
+                          setShowQualityMenu(false);
+                        }}
                       >
-                        {item.badge}
-                        {item.badge === 'HiFi' && (
-                          <CrystalIcon size={10} className="quality-badge__crystal" />
-                        )}
-                      </span>
-                      <div className="quality-menu__info">
-                        <div className="quality-menu__label">{item.label}</div>
-                        <div className="quality-menu__desc">{item.desc}</div>
-                      </div>
-                      {isSelected && (
-                        <svg
-                          className="quality-menu__check"
-                          width="16"
-                          height="16"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="2.5"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
+                        <span
+                          className={`quality-badge quality-badge--${
+                            item.id === 'flac' ? 'hifi' : item.id === 'high' ? 'hq' : 'sq'
+                          }`}
                         >
-                          <polyline points="20 6 9 17 4 12" />
-                        </svg>
-                      )}
-                    </button>
-                  );
-                })}
+                          {item.badge}
+                          {item.badge === 'HiFi' && (
+                            <CrystalIcon size={10} className="quality-badge__crystal" />
+                          )}
+                        </span>
+                        <div className="quality-menu__info">
+                          <div className="quality-menu__label">{item.label}</div>
+                          <div className="quality-menu__desc">{item.desc}</div>
+                        </div>
+                        {isSelected && (
+                          <svg
+                            className="quality-menu__check"
+                            width="16"
+                            height="16"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2.5"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          >
+                            <polyline points="20 6 9 17 4 12" />
+                          </svg>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
-            </div>
-          )}
-        </div>
+            )}
+          </div>
+        )}
 
         <div
           ref={volumeControlRef}
-          className="volume-control"
-          title={`Громкость: ${Math.round((isMuted ? 0 : volume) * 100)}% (прокрутка колёсиком мыши)`}
+          className={`volume-control ${isSberCastConnected ? 'volume-control--sbercast' : ''}`}
+          title={
+            isSberCastConnected
+              ? `Громкость колонки SberCast: ${Math.round((isMuted ? 0 : volume) * 100)}% (прокрутка колёсиком мыши)`
+              : `Громкость: ${Math.round((isMuted ? 0 : volume) * 100)}% (прокрутка колёсиком мыши)`
+          }
         >
           <button
             className="player-bar__btn"
             onClick={toggleMute}
-            title={isMuted ? 'Включить звук' : 'Выключить звук (колёсико для громкости)'}
+            title={
+              isSberCastConnected
+                ? isMuted
+                  ? 'Включить звук колонки'
+                  : 'Выключить звук колонки (колёсико для громкости)'
+                : isMuted
+                ? 'Включить звук'
+                : 'Выключить звук (колёсико для громкости)'
+            }
+            style={{
+              color: isSberCastConnected ? '#21c063' : undefined,
+            }}
           >
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
               {isMuted || volume === 0 ? (
@@ -478,13 +484,19 @@ export function PlayerBar() {
             value={isMuted ? 0 : volume}
             onChange={handleVolumeChange}
             style={{
-              background: `linear-gradient(to right, #ffffff 0%, #ffffff ${Math.round((isMuted ? 0 : volume) * 100)}%, rgba(255, 255, 255, 0.18) ${Math.round((isMuted ? 0 : volume) * 100)}%, rgba(255, 255, 255, 0.18) 100%)`,
+              background: `linear-gradient(to right, ${isSberCastConnected ? '#21c063' : '#ffffff'} 0%, ${isSberCastConnected ? '#21c063' : '#ffffff'} ${Math.round((isMuted ? 0 : volume) * 100)}%, rgba(255, 255, 255, 0.18) ${Math.round((isMuted ? 0 : volume) * 100)}%, rgba(255, 255, 255, 0.18) 100%)`,
             }}
-            title={`Громкость: ${Math.round((isMuted ? 0 : volume) * 100)}% (прокрутка колёсиком мыши)`}
+            title={
+              isSberCastConnected
+                ? `Громкость колонки SberCast: ${Math.round((isMuted ? 0 : volume) * 100)}% (прокрутка колёсиком мыши)`
+                : `Громкость: ${Math.round((isMuted ? 0 : volume) * 100)}% (прокрутка колёсиком мыши)`
+            }
           />
         </div>
 
-        {/* Lyrics, Queue, Fullscreen Buttons */}
+        {/* SberCast, Lyrics, Queue, Fullscreen Buttons */}
+        <SberCastButton />
+
         <button
           className={`player-bar__btn ${sidePanelTab === 'lyrics' ? 'player-bar__btn--active' : ''}`}
           onClick={() => toggleSidePanel('lyrics')}

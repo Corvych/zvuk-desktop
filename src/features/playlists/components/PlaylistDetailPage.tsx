@@ -9,9 +9,10 @@ import { ShareIcon } from '../../../components/ShareIcon';
 import { showToast } from '../../../components/Toast';
 import { CrystalIcon } from '../../../components/CrystalIcon';
 import { EditPlaylistModal } from './EditPlaylistModal';
-import { PlaylistCover } from './PlaylistCover';
 import { usePlaylistModalStore } from '../playlistModalStore';
 import { useAuthStore } from '../../auth/authStore';
+import { extractMonetFromImage, type MonetTheme } from '../../../lib/monetPalette';
+import { useAudioReactive } from '../../player/useAudioReactive';
 
 
 function formatDuration(totalSeconds: number): string {
@@ -35,6 +36,8 @@ export function PlaylistDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
 
+  useAudioReactive();
+
   const [playlist, setPlaylist] = useState<Playlist | null>(null);
   const [playlistTracks, setPlaylistTracks] = useState<Track[]>([]);
   const [loading, setLoading] = useState(true);
@@ -42,11 +45,12 @@ export function PlaylistDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
   const [isEditModalOpen, setIsEditModalOpen] = useState<boolean>(false);
+  const [backdropTheme, setBackdropTheme] = useState<MonetTheme | null>(null);
 
   const tracksSentinelRef = useRef<HTMLDivElement | null>(null);
   const playlistStateRef = useRef({ loading: false, offset: 0, hasNext: false });
 
-  const { currentTrack, isPlaying, setQueue, togglePlay } = usePlayerStore();
+  const { currentTrack, isPlaying, setQueue, togglePlay, startTrackRadio } = usePlayerStore();
   const { isLiked, toggleLikeTrack } = useFavouritesStore();
   const currentUser = useAuthStore((s) => s.user);
   const checkIsOwner = usePlaylistModalStore((s) => s.checkIsOwner);
@@ -182,6 +186,38 @@ export function PlaylistDetailPage() {
   const isCurrentPlaylistPlaying =
     isPlaying && tracks.some((t) => t.id === currentTrack?.id);
 
+  const backdropCover =
+    playlist?.cover_url ||
+    (playlist?.cover_urls && playlist.cover_urls[0]) ||
+    tracks[0]?.cover_url ||
+    null;
+
+  useEffect(() => {
+    setBackdropTheme(null);
+    if (!backdropCover) return;
+    let active = true;
+    extractMonetFromImage(backdropCover).then((theme) => {
+      if (active) setBackdropTheme(theme);
+    });
+    return () => {
+      active = false;
+    };
+  }, [backdropCover]);
+
+  useEffect(() => {
+    if (!playlist || !backdropTheme) return;
+    const root = document.documentElement;
+    root.style.setProperty('--artist-glow-rgb', backdropTheme.glowRgb);
+    root.style.setProperty('--artist-secondary-rgb', backdropTheme.secondaryRgb);
+    root.style.setProperty('--artist-tertiary-rgb', backdropTheme.tertiaryRgb);
+
+    return () => {
+      root.style.removeProperty('--artist-glow-rgb');
+      root.style.removeProperty('--artist-secondary-rgb');
+      root.style.removeProperty('--artist-tertiary-rgb');
+    };
+  }, [playlist, backdropTheme]);
+
   const handlePlayAll = () => {
     if (tracks.length === 0) return;
     if (isCurrentPlaylistPlaying) {
@@ -278,99 +314,146 @@ export function PlaylistDetailPage() {
   const totalDuration = tracks.reduce((acc, t) => acc + (t.duration || 0), 0) || playlist.duration;
 
   return (
-    <div className="detail-page page-enter page-enter-active">
+    <div
+      className="detail-page artist-page-container page-enter page-enter-active"
+      style={
+        backdropTheme
+          ? ({
+              '--artist-glow-rgb': backdropTheme.glowRgb,
+              '--artist-secondary-rgb': backdropTheme.secondaryRgb,
+              '--artist-tertiary-rgb': backdropTheme.tertiaryRgb,
+              '--artist-gradient': backdropTheme.gradient,
+              '--artist-accent-color': backdropTheme.accentColor,
+              '--accent': backdropTheme.accentColor,
+              '--accent-light': backdropTheme.accentColor,
+              '--accent-muted': `rgba(${backdropTheme.glowRgb}, 0.15)`,
+              '--accent-glow': `rgba(${backdropTheme.glowRgb}, 0.45)`,
+            } as React.CSSProperties)
+          : undefined
+      }
+    >
+      {/* ─── Playlist Backdrop Artwork (Frameless Right-Flank Background Bleed with Vignette) ─── */}
+      {backdropCover && (
+        <div
+          className="artist-backdrop detail-backdrop"
+          aria-hidden="true"
+          style={{ opacity: backdropTheme ? 1 : 0, transition: 'opacity 0.35s ease' }}
+        >
+          <div className={`artist-backdrop__glow ${isCurrentPlaylistPlaying ? 'artist-backdrop__glow--reactive' : ''}`}>
+            <div className="artist-backdrop__glow-outer" />
+            <div className="artist-backdrop__glow-chromatic">
+              <img
+                src={backdropCover}
+                alt=""
+                className="artist-backdrop__glow-chromatic-img detail-backdrop__chromatic-img"
+              />
+            </div>
+            <div className="artist-backdrop__glow-rim" />
+            <div className="artist-backdrop__glow-inner" />
+          </div>
+
+          <div className="artist-backdrop__photo-wrap">
+            <img
+              src={backdropCover}
+              alt=""
+              className="artist-backdrop__img detail-backdrop__img"
+            />
+            <div className="artist-backdrop__vignette" />
+          </div>
+        </div>
+      )}
+
       {/* Back button */}
-      <button className="detail-back-btn" onClick={() => navigate(-1)} title="Вернуться назад">
+      <button className="detail-back-btn" onClick={() => navigate(-1)} title="Вернуться назад" style={{ position: 'relative', zIndex: 3 }}>
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
           <path d="M15 18L9 12L15 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
         </svg>
         Назад
       </button>
 
-      {/* Hero Header */}
-      <div className="detail-hero">
-        {(() => {
-          const backdrop = tracks[0]?.cover_url || playlist.cover_url || (playlist.cover_urls && playlist.cover_urls[0]);
-          return backdrop ? (
-            <div
-              className="detail-hero__backdrop"
-              style={{ backgroundImage: `url(${backdrop})` }}
-            />
-          ) : null;
-        })()}
-        <div className="detail-hero__cover">
-          <PlaylistCover playlist={playlist} tracks={tracks} />
-        </div>
+      {/* ─── Hero Section (Mirrors Favourites / Artist Detail Header) ───────── */}
+      <div className="artist-hero-grid favorites-hero-grid--artist">
+        <div className="artist-hero__left">
+          <div>
+            <div className="artist-hero__badge">Плейлист</div>
+            <h1 className="artist-hero__title">{playlist.title}</h1>
 
-        <div className="detail-hero__info">
-          <span className="detail-badge">ПЛЕЙЛИСТ</span>
-          <h1 className="detail-hero__title">{playlist.title}</h1>
-          {playlist.description && (
-            <p className="detail-hero__desc">{playlist.description}</p>
-          )}
+            <div className="artist-hero__meta">
+              <span className="detail-hero__author">
+                {playlist.owner ? `Автор: ${playlist.owner}` : 'Редакция Звука'}
+              </span>
+              <span className="detail-hero__dot">·</span>
+              <span>{tracks.length} треков</span>
+              {totalDuration > 0 && (
+                <>
+                  <span className="detail-hero__dot">·</span>
+                  <span>{formatDuration(totalDuration)}</span>
+                </>
+              )}
+              {typeof playlist.is_public === 'boolean' && (
+                <>
+                  <span className="detail-hero__dot">·</span>
+                  <span
+                    className={`detail-publicity-tag ${playlist.is_public ? 'detail-publicity-tag--public' : 'detail-publicity-tag--private'}`}
+                    title={playlist.is_public ? 'Публичный плейлист: доступен всем' : 'Приватный плейлист: доступен только вам'}
+                  >
+                    {playlist.is_public ? '🌐 Публичный' : '🔒 Приватный'}
+                  </span>
+                </>
+              )}
+            </div>
 
-          <div className="detail-hero__meta">
-            <span className="detail-hero__author">
-              {playlist.owner ? `Автор: ${playlist.owner}` : 'Редакция Звука'}
-            </span>
-            <span className="detail-hero__dot">·</span>
-            <span>{tracks.length} треков</span>
-            {totalDuration > 0 && (
-              <>
-                <span className="detail-hero__dot">·</span>
-                <span>{formatDuration(totalDuration)}</span>
-              </>
-            )}
-            {typeof playlist.is_public === 'boolean' && (
-              <>
-                <span className="detail-hero__dot">·</span>
-                <span
-                  className={`detail-publicity-tag ${playlist.is_public ? 'detail-publicity-tag--public' : 'detail-publicity-tag--private'}`}
-                  title={playlist.is_public ? 'Публичный плейлист: доступен всем' : 'Приватный плейлист: доступен только вам'}
-                >
-                  {playlist.is_public ? '🌐 Публичный' : '🔒 Приватный'}
-                </span>
-              </>
+            {playlist.description && (
+              <div className="artist-hero__bio">
+                <p className="artist-hero__bio-text artist-hero__bio-text--expanded">
+                  {playlist.description}
+                </p>
+              </div>
             )}
           </div>
 
-          <div className="detail-hero__actions">
+          <div className="artist-hero__actions">
             <button
-              className="detail-play-btn"
+              className="artist-hero__play-btn"
               onClick={handlePlayAll}
               disabled={tracks.length === 0}
               title={isCurrentPlaylistPlaying ? 'Приостановить' : 'Воспроизвести все'}
             >
               {isCurrentPlaylistPlaying ? (
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
-                  <rect x="6" y="4" width="4" height="16" rx="1" />
-                  <rect x="14" y="4" width="4" height="16" rx="1" />
-                </svg>
+                <>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                    <rect x="6" y="4" width="4" height="16" rx="1" />
+                    <rect x="14" y="4" width="4" height="16" rx="1" />
+                  </svg>
+                  <span>Пауза</span>
+                </>
               ) : (
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M8 5V19L19 12L8 5Z" />
-                </svg>
+                <>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M8 5V19L19 12L8 5Z" />
+                  </svg>
+                  <span>Слушать</span>
+                </>
               )}
-              {isCurrentPlaylistPlaying ? 'Пауза' : 'Слушать'}
             </button>
 
             <button
-              className="detail-action-btn"
+              className="artist-hero__shuffle-btn"
               onClick={handleShufflePlay}
               disabled={tracks.length === 0}
               title="Перемешать и воспроизвести"
             >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
-                <path d="M16 3H21V8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                <path d="M4 20L21 3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                <path d="M21 16V21H16" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                <path d="M15 15L21 21" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                <path d="M4 4L9 9" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M16 3H21V8" />
+                <path d="M4 20L21 3" />
+                <path d="M21 16V21H16" />
+                <path d="M15 15L21 21" />
+                <path d="M4 4L9 9" />
               </svg>
             </button>
 
             <button
-              className="detail-action-btn"
+              className="artist-hero__shuffle-btn"
               onClick={() => {
                 navigator.clipboard.writeText(`https://zvuk.com/playlist/${playlist.id}`);
                 showToast('Ссылка на плейлист скопирована', 'success');
@@ -382,7 +465,7 @@ export function PlaylistDetailPage() {
 
             {isOwner && (
               <button
-                className="detail-action-btn"
+                className="artist-hero__shuffle-btn"
                 onClick={() => setIsEditModalOpen(true)}
                 title="Редактировать плейлист (название, порядок треков)"
               >
@@ -522,6 +605,24 @@ export function PlaylistDetailPage() {
                     </div>
 
                     <div className="detail-table__col-actions">
+                      <button
+                        type="button"
+                        className="detail-row-action-btn"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          startTrackRadio(track);
+                          showToast(`Запущен поток в стиле «${track.title}»`, 'info');
+                        }}
+                        title="Поток по треку"
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9" />
+                          <path d="M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.5" />
+                          <circle cx="12" cy="12" r="2" fill="currentColor" />
+                          <path d="M16.2 7.8c2.3 2.3 2.3 6.1 0 8.5" />
+                          <path d="M19.1 4.9C23 8.8 23 15.2 19.1 19.1" />
+                        </svg>
+                      </button>
                       <button
                         type="button"
                         className="detail-row-action-btn"

@@ -26,15 +26,16 @@ export function useAudioReactive(targetRef?: React.RefObject<HTMLElement | null>
       setProps('--audio-energy', '0');
       setProps('--audio-glow-scale', '1');
       setProps('--audio-glow-opacity', '0.5');
-      setProps('--audio-bar-1', '4px');
-      setProps('--audio-bar-2', '4px');
-      setProps('--audio-bar-3', '4px');
       return;
     }
 
     let animId: number;
     let isRunning = true;
-    const dataArray = new Uint8Array(32);
+    // 64 bins from fftSize=256 analyser. At 44100 Hz: each bin ≈ 344 Hz wide.
+    // Bass:   bins 0–4   (~0–1.7 kHz, skipping bin 0 which may carry DC offset)
+    // Mid:    bins 5–14  (~1.7–5 kHz)
+    // Treble: bins 15–28 (~5–10 kHz)
+    const dataArray = new Uint8Array(64);
     let smoothedBass = 0;
     let smoothedMid = 0;
     let smoothedTreble = 0;
@@ -74,9 +75,6 @@ export function useAudioReactive(targetRef?: React.RefObject<HTMLElement | null>
         setProps('--audio-energy', smoothedEnergy.toFixed(2));
         setProps('--audio-glow-scale', (1 + smoothedBass * 0.25).toFixed(2));
         setProps('--audio-glow-opacity', (0.45 + smoothedEnergy * 0.35).toFixed(2));
-        setProps('--audio-bar-1', '4px');
-        setProps('--audio-bar-2', '4px');
-        setProps('--audio-bar-3', '4px');
         animId = requestAnimationFrame(tick);
         return;
       }
@@ -84,24 +82,39 @@ export function useAudioReactive(targetRef?: React.RefObject<HTMLElement | null>
       let hasRealAudio = false;
 
       if (sampleByteFrequencyData(dataArray)) {
+        // Check signal presence across the main audible range (bins 1–28).
+        // Bin 0 is skipped: it can carry a DC-offset artifact even during silence.
         let sum = 0;
-        for (let i = 0; i < 16; i++) {
+        for (let i = 1; i < 28; i++) {
           sum += dataArray[i];
         }
 
-        // Noise gate: only respond when there is actual audible signal (silence is truly silent)
-        if (sum > 4) {
+        // Noise gate: require a meaningful signal level across the audible band.
+        // With smoothingTimeConstant=0 the FFT is now raw per-frame, so sum>80
+        // across 27 bins safely rejects true silence and codec DC leakage.
+        if (sum > 80) {
           hasRealAudio = true;
-          const rawBass = (dataArray[0] + dataArray[1] + dataArray[2] + dataArray[3]) / (4 * 255);
-          const rawMid = (dataArray[4] + dataArray[5] + dataArray[6] + dataArray[7] + dataArray[8]) / (5 * 255);
-          const rawTreble = (dataArray[9] + dataArray[10] + dataArray[11] + dataArray[12]) / (4 * 255);
+
+          // Bass: bins 1–4 (~344 Hz – 1.72 kHz), skip DC bin 0
+          const rawBass = (dataArray[1] + dataArray[2] + dataArray[3] + dataArray[4]) / (4 * 255);
+          // Mid: bins 5–14 (~1.72 kHz – 4.83 kHz)
+          const rawMid =
+            (dataArray[5] + dataArray[6] + dataArray[7] + dataArray[8] + dataArray[9] +
+             dataArray[10] + dataArray[11] + dataArray[12] + dataArray[13] + dataArray[14]) /
+            (10 * 255);
+          // Treble: bins 15–28 (~5.2 kHz – 9.6 kHz)
+          const rawTreble =
+            (dataArray[15] + dataArray[16] + dataArray[17] + dataArray[18] + dataArray[19] +
+             dataArray[20] + dataArray[21] + dataArray[22] + dataArray[23] + dataArray[24] +
+             dataArray[25] + dataArray[26] + dataArray[27] + dataArray[28]) /
+            (14 * 255);
           const rawEnergy = rawBass * 0.5 + rawMid * 0.35 + rawTreble * 0.15;
 
-          // Asymmetric attack/decay: snappy attack on beats, smooth musical release
-          const bSpeed = rawBass > smoothedBass ? 0.28 : 0.14;
-          const mSpeed = rawMid > smoothedMid ? 0.24 : 0.12;
-          const tSpeed = rawTreble > smoothedTreble ? 0.24 : 0.14;
-          const eSpeed = rawEnergy > smoothedEnergy ? 0.26 : 0.12;
+          // Moderate attack — responsive but not jarring; longer musical tail
+          const bSpeed = rawBass > smoothedBass ? 0.26 : 0.10;
+          const mSpeed = rawMid > smoothedMid ? 0.22 : 0.09;
+          const tSpeed = rawTreble > smoothedTreble ? 0.22 : 0.10;
+          const eSpeed = rawEnergy > smoothedEnergy ? 0.24 : 0.09;
 
           smoothedBass += (rawBass - smoothedBass) * bSpeed;
           smoothedMid += (rawMid - smoothedMid) * mSpeed;
@@ -111,11 +124,12 @@ export function useAudioReactive(targetRef?: React.RefObject<HTMLElement | null>
       }
 
       if (!hasRealAudio) {
-        // True silence or quiet passages: decay to calm resting state (ZERO phantom hits)
-        smoothedBass *= 0.86;
-        smoothedMid *= 0.86;
-        smoothedTreble *= 0.86;
-        smoothedEnergy *= 0.86;
+        // True silence or quiet passages: gentle decay, not an instant drop
+        // Slower multiplier = longer "breathing out" after the last beat
+        smoothedBass *= 0.92;
+        smoothedMid *= 0.92;
+        smoothedTreble *= 0.92;
+        smoothedEnergy *= 0.92;
 
         if (smoothedBass < 0.005) smoothedBass = 0;
         if (smoothedMid < 0.005) smoothedMid = 0;
@@ -130,19 +144,12 @@ export function useAudioReactive(targetRef?: React.RefObject<HTMLElement | null>
       setProps('--audio-energy', smoothedEnergy.toFixed(2));
 
       // GPU hardware composite-friendly transforms (scale & opacity)
-      const scale = 1.0 + smoothedBass * 0.28;
-      const opacity = 0.5 + smoothedEnergy * 0.45;
+      // Wider range → more visible punch on every hit
+      const scale = 1.0 + smoothedBass * 0.45;
+      const opacity = 0.42 + smoothedEnergy * 0.58;
 
       setProps('--audio-glow-scale', scale.toFixed(2));
       setProps('--audio-glow-opacity', Math.min(1, opacity).toFixed(2));
-
-      // Equalizer bars
-      const b1 = Math.max(4, Math.round(4 + (hasRealAudio ? dataArray[1] / 255 : smoothedBass) * 12));
-      const b2 = Math.max(4, Math.round(4 + (hasRealAudio ? dataArray[4] / 255 : smoothedMid) * 14));
-      const b3 = Math.max(4, Math.round(4 + (hasRealAudio ? dataArray[8] / 255 : smoothedTreble) * 11));
-      setProps('--audio-bar-1', `${b1}px`);
-      setProps('--audio-bar-2', `${b2}px`);
-      setProps('--audio-bar-3', `${b3}px`);
 
       animId = requestAnimationFrame(tick);
     };

@@ -54,7 +54,7 @@ void main() {
   // Multi-frequency liquid silk wave displacements
   float wave1 = sin(flow * 3.8 + perp * 1.6 + t * 0.75) * 0.20;
   float wave2 = cos(flow * 6.5 - perp * 2.2 - t * 0.60) * 0.12;
-  float wave3 = sin(perp * 8.0 + flow * 2.8 + t * 0.90 + u_bass * 0.45) * 0.08;
+  float wave3 = sin(perp * 8.0 + flow * 2.8 + t * 0.90 + u_bass * 0.55) * 0.08;
   float wave4 = cos(flow * 12.0 + perp * 4.5 + t * 1.1) * 0.04;
 
   float warp = flow + wave1 + wave2 + wave3 + wave4;
@@ -102,12 +102,12 @@ void main() {
 
   // Combine base gradient + illuminated folds
   vec3 col = darkSilk + baseGrad * 0.80;
-  col += crestColor * foldTotal * (0.65 + u_bass * 0.32);
+  col += crestColor * foldTotal * (0.65 + u_bass * 0.38);
   col = mix(col, accentWoven, clamp(fold4 * 0.35, 0.0, 0.45));
 
   // Velvety sheen and iridescent highlights on fold ridges
   vec3 sheenCol = mix(crestColor * 1.15, vec3(1.0), 0.25);
-  col += sheenCol * sheen * (0.30 + u_energy * 0.32);
+  col += sheenCol * sheen * (0.30 + u_energy * 0.38);
 
   // Soft atmospheric tone mapping: ensures bright colors never wash out text
   col = col / (1.0 + col * 0.35);
@@ -186,61 +186,61 @@ void main() {
   float y1 = mod(t * 0.13 + 0.10, 1.64) - 0.82;
   vec2 c1 = vec2(sin(t * 0.18 + 0.8) * 0.22 * aspect, y1);
   float s1 = blobScale(y1);
-  float b1 = sdBlob(p, c1, (0.22 + 0.045 * u_bass) * s1, 0.009 + 0.007 * u_bass, t, 0.0);
+  float b1 = sdBlob(p, c1, (0.22 + 0.11 * u_bass) * s1, 0.009 + 0.016 * u_bass, t, 0.0);
 
   // Blob 2: Substantial rising bubble (right)
   float y2 = mod(t * 0.15 + 0.65, 1.64) - 0.82;
   vec2 c2 = vec2(cos(t * 0.21 + 2.1) * 0.28 * aspect, y2);
   float s2 = blobScale(y2);
-  float b2 = sdBlob(p, c2, (0.19 + 0.038 * u_bass) * s2, 0.008 + 0.006 * u_mid, t, 1.2);
+  float b2 = sdBlob(p, c2, (0.19 + 0.090 * u_bass) * s2, 0.008 + 0.014 * u_mid, t, 1.2);
 
   // Blob 3: Descending cooled wax bubble (left)
   float y3 = 0.82 - mod(t * 0.11 + 0.35, 1.64);
   vec2 c3 = vec2(sin(t * 0.16 + 4.1) * 0.32 * aspect, y3);
   float s3 = blobScale(y3);
-  float b3 = sdBlob(p, c3, (0.18 + 0.030 * u_mid) * s3, 0.007, t, 2.5);
+  float b3 = sdBlob(p, c3, (0.18 + 0.075 * u_mid) * s3, 0.007, t, 2.5);
 
   // Blob 4: Rising buoyant droplet (center-right)
   float y4 = mod(t * 0.18 + 1.15, 1.64) - 0.82;
   vec2 c4 = vec2(-cos(t * 0.24 + 1.2) * 0.18 * aspect, y4);
   float s4 = blobScale(y4);
-  float b4 = sdBlob(p, c4, (0.17 + 0.032 * u_energy) * s4, 0.008, t, 3.8);
+  float b4 = sdBlob(p, c4, (0.17 + 0.080 * u_energy) * s4, 0.008, t, 3.8);
 
   // Blob 5: Major rising droplet (center)
   float y5 = mod(t * 0.12 + 0.40, 1.64) - 0.82;
   vec2 c5 = vec2(cos(t * 0.18 - 1.0) * 0.18 * aspect, y5);
   float s5 = blobScale(y5);
-  float b5 = sdBlob(p, c5, (0.22 + 0.045 * u_bass) * s5, 0.009 + 0.007 * u_bass, t, 4.4);
+  float b5 = sdBlob(p, c5, (0.22 + 0.11 * u_bass) * s5, 0.009 + 0.016 * u_bass, t, 4.4);
 
   // Blob 6: Descending cooled blob (right)
   float y6 = 0.82 - mod(t * 0.13 + 1.05, 1.64);
   vec2 c6 = vec2(-sin(t * 0.19 + 2.8) * 0.28 * aspect, y6);
   float s6 = blobScale(y6);
-  float b6 = sdBlob(p, c6, (0.18 + 0.030 * u_mid) * s6, 0.007, t, 5.1);
+  float b6 = sdBlob(p, c6, (0.18 + 0.075 * u_mid) * s6, 0.007, t, 5.1);
 
   // Blob 7: Rising warm balloon (far left)
   float y7 = mod(t * 0.14 + 1.40, 1.64) - 0.82;
   vec2 c7 = vec2(-0.35 * aspect + sin(t * 0.22 + 0.5) * 0.12 * aspect, y7);
   float s7 = blobScale(y7);
-  float b7 = sdBlob(p, c7, (0.18 + 0.035 * u_bass) * s7, 0.008 + 0.005 * u_bass, t, 0.7);
+  float b7 = sdBlob(p, c7, (0.18 + 0.088 * u_bass) * s7, 0.008 + 0.012 * u_bass, t, 0.7);
 
   // Blob 8: Rising warm balloon (far right)
   float y8 = mod(t * 0.16 + 0.90, 1.64) - 0.82;
   vec2 c8 = vec2(0.36 * aspect + cos(t * 0.20 + 3.4) * 0.12 * aspect, y8);
   float s8 = blobScale(y8);
-  float b8 = sdBlob(p, c8, (0.18 + 0.035 * u_energy) * s8, 0.008, t, 1.9);
+  float b8 = sdBlob(p, c8, (0.18 + 0.088 * u_energy) * s8, 0.008, t, 1.9);
 
   // Blob 9: Descending cooled wax droplet (center-left)
   float y9 = 0.82 - mod(t * 0.12 + 0.70, 1.64);
   vec2 c9 = vec2(sin(t * 0.17 + 3.8) * 0.22 * aspect, y9);
   float s9 = blobScale(y9);
-  float b9 = sdBlob(p, c9, (0.19 + 0.032 * u_bass) * s9, 0.007, t, 3.2);
+  float b9 = sdBlob(p, c9, (0.19 + 0.080 * u_bass) * s9, 0.007, t, 3.2);
 
   // Blob 10: Rising buoyant droplet (center-right)
   float y10 = mod(t * 0.14 + 0.25, 1.64) - 0.82;
   vec2 c10 = vec2(cos(t * 0.20 + 5.2) * 0.20 * aspect, y10);
   float s10 = blobScale(y10);
-  float b10 = sdBlob(p, c10, (0.19 + 0.034 * u_bass) * s10, 0.008 + 0.006 * u_mid, t, 4.8);
+  float b10 = sdBlob(p, c10, (0.19 + 0.085 * u_bass) * s10, 0.008 + 0.014 * u_mid, t, 4.8);
 
   // 3. Smooth minimum fusion across all wax elements (wide, rich liquid bridges)
   float d = bottomPool;
@@ -279,7 +279,7 @@ void main() {
   float inside = smoothstep(0.012, -0.04, d);
   float core = smoothstep(-0.03, -0.15, d);
   vec3 waxCol = mix(warmWax * 0.72, warmWax * 1.15, core);
-  waxCol += u_color1 * core * (0.22 + u_bass * 0.28);
+  waxCol += u_color1 * core * (0.22 + u_bass * 0.70);
 
   // Glossy rim highlight (Fresnel meniscus) - gentle, tinted meniscus
   float rim = smoothstep(0.032, 0.0, abs(d));
@@ -287,10 +287,10 @@ void main() {
 
   // Ambient fluid glow around blobs
   float halo = exp(-max(0.0, d) * 7.5);
-  vec3 ambientGlow = warmWax * halo * (0.28 + 0.20 * u_bass);
+  vec3 ambientGlow = warmWax * halo * (0.28 + 0.50 * u_bass);
 
   // Lamp bulb thermal under-glow at bottom
-  float bulb = exp(-(p.y + 0.52) * 5.2) * (0.30 + 0.25 * u_bass);
+  float bulb = exp(-(p.y + 0.52) * 5.2) * (0.30 + 0.55 * u_bass);
   vec3 bulbGlow = u_color1 * bulb * 0.35;
 
   // Composite final color
@@ -459,12 +459,20 @@ export function FluidBackdropVisualizer({
     let smoothedMid = 0;
     let smoothedEnergy = 0;
 
+    // Dynamic baseline: slow-moving average of energy level (~2–3 s window).
+    // The shader only receives EXCESS above this baseline, so the background stays
+    // calm during steady-state playback and flares visibly only on real transients
+    // (kick drum, snare, etc.), restoring the visual contrast of hard hits.
+    let baselineBass = 0;
+    let baselineMid = 0;
+    let baselineEnergy = 0;
+
     // Interpolated palette colors for buttery smooth crossfades between tracks
     const curC1: [number, number, number] = parseRgb(colorsRef.current.glowRgb, [120 / 255, 70 / 255, 180 / 255]);
     const curC2: [number, number, number] = parseRgb(colorsRef.current.secondaryRgb, [200 / 255, 60 / 255, 120 / 255]);
     const curC3: [number, number, number] = parseRgb(colorsRef.current.tertiaryRgb, [50 / 255, 130 / 255, 210 / 255]);
 
-    const freqArray = new Uint8Array(32);
+    const freqArray = new Uint8Array(64);
 
     const resize = () => {
       if (!canvas || !gl) return;
@@ -522,35 +530,59 @@ export function FluidBackdropVisualizer({
       let hasReal = false;
 
       if (sampleByteFrequencyData(freqArray)) {
+        // Scan audible bins 1–28, skip bin 0 (DC offset artifact).
         let sum = 0;
-        for (let i = 0; i < 16; i++) sum += freqArray[i];
+        for (let i = 1; i < 28; i++) sum += freqArray[i];
 
-        // Noise gate: only react when there is actual audible signal
-        if (sum > 4) {
+        // Noise gate: sum>80 across 27 bins safely rejects silence/codec DC leakage.
+        if (sum > 80) {
           hasReal = true;
-          const rawBass = (freqArray[0] + freqArray[1] + freqArray[2] + freqArray[3]) / (4 * 255);
-          const rawMid = (freqArray[4] + freqArray[5] + freqArray[6] + freqArray[7]) / (4 * 255);
+          // Bass: bins 1–4 (skip DC bin 0); Mid: bins 5–14
+          const rawBass = (freqArray[1] + freqArray[2] + freqArray[3] + freqArray[4]) / (4 * 255);
+          const rawMid =
+            (freqArray[5] + freqArray[6] + freqArray[7] + freqArray[8] + freqArray[9] +
+             freqArray[10] + freqArray[11] + freqArray[12] + freqArray[13] + freqArray[14]) /
+            (10 * 255);
           const rawEnergy = rawBass * 0.6 + rawMid * 0.4;
 
-          // Asymmetric attack/decay: lively snappy response on real beats, smooth decay
-          const bassSpeed = rawBass > smoothedBass ? 0.28 : 0.12;
-          const midSpeed = rawMid > smoothedMid ? 0.24 : 0.10;
-          const energySpeed = rawEnergy > smoothedEnergy ? 0.26 : 0.10;
+          // Update slow-moving baseline (τ ≈ 2–3 s): tracks the "steady-state" loudness.
+          // Rises slowly, falls even slower — always lags behind instantaneous peaks.
+          const baselineUp = 0.004;
+          const baselineDown = 0.002;
+          baselineBass   += (rawBass   - baselineBass)   * (rawBass   > baselineBass   ? baselineUp : baselineDown);
+          baselineMid    += (rawMid    - baselineMid)    * (rawMid    > baselineMid    ? baselineUp : baselineDown);
+          baselineEnergy += (rawEnergy - baselineEnergy) * (rawEnergy > baselineEnergy ? baselineUp : baselineDown);
 
-          smoothedBass += (rawBass - smoothedBass) * bassSpeed;
-          smoothedMid += (rawMid - smoothedMid) * midSpeed;
-          smoothedEnergy += (rawEnergy - smoothedEnergy) * energySpeed;
+          // Relative signal: only the EXCESS above baseline reaches the shader.
+          // Multiply by 4 so a typical transient (20–30% above baseline) maps
+          // to 0.8–1.2 instead of 0.05–0.08 — giving the shader real headroom.
+          const REL_AMP = 4.0;
+          const relBass   = Math.min(1.0, Math.max(0, rawBass   - baselineBass   * 0.80) * REL_AMP);
+          const relMid    = Math.min(1.0, Math.max(0, rawMid    - baselineMid    * 0.80) * REL_AMP);
+          const relEnergy = Math.min(1.0, Math.max(0, rawEnergy - baselineEnergy * 0.80) * REL_AMP);
+
+          // Moderate attack — snappy but not jarring; longer tail for organic feel
+          const bassSpeed   = relBass   > smoothedBass   ? 0.22 : 0.10;
+          const midSpeed    = relMid    > smoothedMid    ? 0.18 : 0.09;
+          const energySpeed = relEnergy > smoothedEnergy ? 0.20 : 0.10;
+
+          smoothedBass   += (relBass   - smoothedBass)   * bassSpeed;
+          smoothedMid    += (relMid    - smoothedMid)    * midSpeed;
+          smoothedEnergy += (relEnergy - smoothedEnergy) * energySpeed;
         }
       }
 
       if (!hasReal) {
-        // True silence or quiet passages: decay to calm resting state (ZERO phantom hits)
-        smoothedBass *= 0.88;
-        smoothedMid *= 0.88;
-        smoothedEnergy *= 0.88;
+        // Decay to rest; baseline also slowly drifts down during silence
+        smoothedBass   *= 0.90;
+        smoothedMid    *= 0.90;
+        smoothedEnergy *= 0.90;
+        baselineBass   *= 0.998;
+        baselineMid    *= 0.998;
+        baselineEnergy *= 0.998;
 
-        if (smoothedBass < 0.005) smoothedBass = 0;
-        if (smoothedMid < 0.005) smoothedMid = 0;
+        if (smoothedBass   < 0.005) smoothedBass   = 0;
+        if (smoothedMid    < 0.005) smoothedMid    = 0;
         if (smoothedEnergy < 0.005) smoothedEnergy = 0;
       }
 

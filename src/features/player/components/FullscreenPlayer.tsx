@@ -7,10 +7,10 @@ import { LikeButton } from '../../../components/LikeButton';
 import { DislikeButton } from '../../../components/DislikeButton';
 import { DislikeIcon } from '../../../components/DislikeIcon';
 import { useDislikesStore } from '../../dislikes/dislikesStore';
-import { ShareIcon } from '../../../components/ShareIcon';
+import { ShareTrackMenuItem } from '../../../components/ShareTrackMenuItem';
 import { ArtistLinks } from '../../../components/ArtistLinks';
 import { showToast } from '../../../components/Toast';
-import { getOrCreateAudio } from '../audioService';
+import { useKaraokeSmoothTime } from '../useKaraokeSmoothTime';
 import {
   fetchUnifiedLyrics,
   probeAllSources,
@@ -24,9 +24,10 @@ import { useVolumeWheel } from '../useVolumeWheel';
 import { usePlaylistModalStore } from '../../playlists/playlistModalStore';
 import { getCoverUrl } from '../../../api';
 import { FluidBackdropVisualizer, type BackdropMode } from './FluidBackdropVisualizer';
-import { useWindowFreezeStore, getIsWindowFrozen } from '../../../lib/windowFreezeStore';
 import { getAudioQualityDetails } from '../../../lib/audioQuality';
 import { CrystalIcon } from '../../../components/CrystalIcon';
+import { useSberCastStore } from '../../sbercast/sbercastStore';
+import { SberCastButton } from '../../sbercast/components/SberCastButton';
 import { parseLyrics } from '../lyricsParser';
 import { InstrumentalBreakIndicator } from './InstrumentalBreakIndicator';
 import {
@@ -115,6 +116,7 @@ const AudioRulerTrack: React.FC<AudioRulerTrackProps> = ({ progress, duration, o
 
 // ─── Main Fullscreen Player Component ─────────────────────────────────────────
 export function FullscreenPlayer() {
+  const isSberCastConnected = useSberCastStore((s) => s.isConnected);
   const {
     currentTrack,
     isPlaying,
@@ -142,6 +144,7 @@ export function FullscreenPlayer() {
     setFullscreenTab,
     playQueueTrack,
     streamInfo,
+    startTrackRadio,
   } = usePlayerStore();
 
   const audioDetails = useMemo(() => getAudioQualityDetails(streamInfo, quality), [streamInfo, quality]);
@@ -189,7 +192,11 @@ export function FullscreenPlayer() {
   const [showSyncButton, setShowSyncButton] = useState(false);
 
   // Sub-second precision for ultra-smooth 60fps karaoke line progress
-  const [smoothTime, setSmoothTime] = useState(progress);
+  const [smoothTime, setSmoothTime] = useKaraokeSmoothTime({
+    isActive: isFullscreenPlayerOpen && fullscreenTab === 'lyrics',
+    isPlaying,
+    progress,
+  });
 
   // Check cache and reset preferredSource when track changes
   useEffect(() => {
@@ -256,43 +263,6 @@ export function FullscreenPlayer() {
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [sourceMenuOpen]);
-
-  useEffect(() => {
-    if (fullscreenTab !== 'lyrics' || !isPlaying) {
-      setSmoothTime(progress);
-      return;
-    }
-    let animId: number;
-    let isRunning = true;
-
-    const tick = () => {
-      if (getIsWindowFrozen() || document.hidden) {
-        isRunning = false;
-        return;
-      }
-      const audio = getOrCreateAudio();
-      if (audio && !audio.paused) {
-        setSmoothTime(audio.currentTime);
-      }
-
-      animId = requestAnimationFrame(tick);
-    };
-    animId = requestAnimationFrame(tick);
-
-    const unsub = useWindowFreezeStore.subscribe((state, prev) => {
-      if (!state.isFrozen && prev.isFrozen) {
-        if (!isRunning) {
-          isRunning = true;
-          animId = requestAnimationFrame(tick);
-        }
-      }
-    });
-
-    return () => {
-      unsub();
-      cancelAnimationFrame(animId);
-    };
-  }, [fullscreenTab, isPlaying]);
 
   // More menu & sleep timer
   const [isMoreMenuOpen, setIsMoreMenuOpen] = useState(false);
@@ -729,7 +699,10 @@ export function FullscreenPlayer() {
 
       {/* Top Header */}
       <header className="fullscreen-overlay__header">
-        <div className="fullscreen-overlay__header-spacer" />
+        <div
+          className="fullscreen-overlay__header-spacer"
+          style={{ width: 'calc(88px * var(--fs-scale))' }}
+        />
 
         {/* Bracketed Tabs: [ ОБЛОЖКА / СЛОВА / ОЧЕРЕДЬ ] */}
         <nav className="fullscreen-tabs" aria-label="Режимы полноэкранного плеера">
@@ -760,18 +733,25 @@ export function FullscreenPlayer() {
           <span className="fullscreen-tabs__bracket">]</span>
         </nav>
 
-        {/* Close Button */}
-        <button
-          type="button"
-          className="fullscreen-overlay__close-btn"
-          onClick={closeFullscreenPlayer}
-          title="Закрыть (Esc)"
-        >
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-            <line x1="18" y1="6" x2="6" y2="18" />
-            <line x1="6" y1="6" x2="18" y2="18" />
-          </svg>
-        </button>
+        {/* Right Actions: SberCast & Close */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 'calc(8px * var(--fs-scale))' }}>
+          <SberCastButton
+            className="fullscreen-overlay__close-btn"
+            iconSize={22}
+            menuPlacement="bottom"
+          />
+          <button
+            type="button"
+            className="fullscreen-overlay__close-btn"
+            onClick={closeFullscreenPlayer}
+            title="Закрыть (Esc)"
+          >
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
+        </div>
       </header>
 
       {/* Main Content Area */}
@@ -832,40 +812,23 @@ export function FullscreenPlayer() {
                       type="button"
                       onClick={() => {
                         setIsMoreMenuOpen(false);
-                        navigator.clipboard.writeText(`https://zvuk.com/track/${currentTrack.id}`);
-                        showToast('Ссылка на трек скопирована', 'success');
+                        startTrackRadio(currentTrack);
+                        showToast(`Запущен поток в стиле «${currentTrack.title}»`, 'info');
                       }}
                     >
-                      <ShareIcon size={16} />
-                      Поделиться треком
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9" />
+                        <path d="M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.5" />
+                        <circle cx="12" cy="12" r="2" fill="currentColor" />
+                        <path d="M16.2 7.8c2.3 2.3 2.3 6.1 0 8.5" />
+                        <path d="M19.1 4.9C23 8.8 23 15.2 19.1 19.1" />
+                      </svg>
+                      Поток по треку
                     </button>
-                    {currentTrack.album_id && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIsMoreMenuOpen(false);
-                          navigator.clipboard.writeText(`https://zvuk.com/release/${currentTrack.album_id}`);
-                          showToast('Ссылка на альбом скопирована', 'success');
-                        }}
-                      >
-                        <ShareIcon size={16} />
-                        Поделиться альбомом
-                      </button>
-                    )}
-                    {(currentTrack.artist_id || currentTrack.artists?.[0]?.id) && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIsMoreMenuOpen(false);
-                          const aId = currentTrack.artist_id ?? currentTrack.artists?.[0]?.id;
-                          navigator.clipboard.writeText(`https://zvuk.com/artist/${aId}`);
-                          showToast('Ссылка на артиста скопирована', 'success');
-                        }}
-                      >
-                        <ShareIcon size={16} />
-                        Поделиться артистом
-                      </button>
-                    )}
+                    <ShareTrackMenuItem
+                      track={currentTrack}
+                      onClose={() => setIsMoreMenuOpen(false)}
+                    />
                     <button
                       type="button"
                       onClick={() => {
@@ -952,16 +915,18 @@ export function FullscreenPlayer() {
               />
             </div>
 
-            <div
-              className="fullscreen-player-card__quality-row"
-              title={`Качество звука: ${audioDetails.fullSummary}`}
-            >
-              <span className="fullscreen-player-card__quality-meta">
-                {audioDetails.codec} • {audioDetails.codec === "FLAC"
-                  ? `${audioDetails.bitDepthText} / ${audioDetails.sampleRateText} • ${audioDetails.bitrateText}`
-                  : `${audioDetails.bitrateText} • ${audioDetails.sampleRateText}`}
-              </span>
-            </div>
+            {!isSberCastConnected && (
+              <div
+                className="fullscreen-player-card__quality-row"
+                title={`Качество звука: ${audioDetails.fullSummary}`}
+              >
+                <span className="fullscreen-player-card__quality-meta">
+                  {audioDetails.codec} • {audioDetails.codec === "FLAC"
+                    ? `${audioDetails.bitDepthText} / ${audioDetails.sampleRateText} • ${audioDetails.bitrateText}`
+                    : `${audioDetails.bitrateText} • ${audioDetails.sampleRateText}`}
+                </span>
+              </div>
+            )}
           </div>
 
           {/* Dashed Tick Ruler Progress Bar */}
@@ -976,14 +941,29 @@ export function FullscreenPlayer() {
             {/* Volume Control */}
             <div
               ref={volumeControlRef}
-              className="fullscreen-controls__volume"
-              title={`Громкость: ${Math.round((isMuted ? 0 : volume) * 100)}% (прокрутка колёсиком мыши)`}
+              className={`fullscreen-controls__volume ${isSberCastConnected ? 'fullscreen-controls__volume--sbercast' : ''}`}
+              title={
+                isSberCastConnected
+                  ? `Громкость колонки SberCast: ${Math.round((isMuted ? 0 : volume) * 100)}% (прокрутка колёсиком мыши)`
+                  : `Громкость: ${Math.round((isMuted ? 0 : volume) * 100)}% (прокрутка колёсиком мыши)`
+              }
             >
               <button
                 type="button"
                 className="fullscreen-icon-btn"
                 onClick={toggleMute}
-                title={isMuted ? 'Включить звук' : 'Выключить звук (колёсико для громкости)'}
+                title={
+                  isSberCastConnected
+                    ? isMuted
+                      ? 'Включить звук колонки'
+                      : 'Выключить звук колонки (колёсико для громкости)'
+                    : isMuted
+                    ? 'Включить звук'
+                    : 'Выключить звук (колёсико для громкости)'
+                }
+                style={{
+                  color: isSberCastConnected ? '#21c063' : undefined,
+                }}
               >
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   {isMuted || volume === 0 ? (
@@ -1017,9 +997,13 @@ export function FullscreenPlayer() {
                 onPointerUp={(e) => (e.target as HTMLElement).blur()}
                 onPointerLeave={(e) => (e.target as HTMLElement).blur()}
                 style={{
-                  background: `linear-gradient(to right, #ffffff 0%, #ffffff ${Math.round((isMuted ? 0 : volume) * 100)}%, rgba(255, 255, 255, 0.18) ${Math.round((isMuted ? 0 : volume) * 100)}%, rgba(255, 255, 255, 0.18) 100%)`,
+                  background: `linear-gradient(to right, ${isSberCastConnected ? '#21c063' : '#ffffff'} 0%, ${isSberCastConnected ? '#21c063' : '#ffffff'} ${Math.round((isMuted ? 0 : volume) * 100)}%, rgba(255, 255, 255, 0.18) ${Math.round((isMuted ? 0 : volume) * 100)}%, rgba(255, 255, 255, 0.18) 100%)`,
                 }}
-                title={`Громкость: ${Math.round((isMuted ? 0 : volume) * 100)}% (прокрутка колёсиком мыши)`}
+                title={
+                  isSberCastConnected
+                    ? `Громкость колонки SberCast: ${Math.round((isMuted ? 0 : volume) * 100)}% (прокрутка колёсиком мыши)`
+                    : `Громкость: ${Math.round((isMuted ? 0 : volume) * 100)}% (прокрутка колёсиком мыши)`
+                }
               />
             </div>
 
@@ -1101,75 +1085,89 @@ export function FullscreenPlayer() {
               </button>
             </div>
 
-            {/* Quality Badge */}
-            <div className="fullscreen-controls__quality">
-              <div style={{ position: 'relative' }}>
-                <button
-                  type="button"
-                  className={`fullscreen-quality-badge ${audioDetails.isHiRes
-                      ? 'fullscreen-quality-badge--hires'
-                      : audioDetails.badgeLabel === 'HiFi'
-                        ? 'fullscreen-quality-badge--hifi'
-                        : ''
-                    }`}
-                  onClick={() => setQualityMenuOpen((p) => !p)}
-                  title={audioDetails.fullSummary}
-                >
-                  <span className="fullscreen-quality-badge__label">{audioDetails.badgeLabel}{audioDetails.badgeLabel === "HiFi" && <CrystalIcon size={10} className="quality-badge__crystal" />}</span>
-                </button>
+            {/* Right: Quality Badge */}
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                justifyContent: 'flex-end',
+                flexShrink: 0,
+                zIndex: 2,
+              }}
+            >
+              {/* Quality Badge */}
+              {!isSberCastConnected && (
+                <div className="fullscreen-controls__quality">
+                  <div style={{ position: 'relative' }}>
+                    <button
+                      type="button"
+                      className={`fullscreen-quality-badge ${audioDetails.isHiRes
+                          ? 'fullscreen-quality-badge--hires'
+                          : audioDetails.badgeLabel === 'HiFi'
+                            ? 'fullscreen-quality-badge--hifi'
+                            : ''
+                        }`}
+                      onClick={() => setQualityMenuOpen((p) => !p)}
+                      title={audioDetails.fullSummary}
+                    >
+                      <span className="fullscreen-quality-badge__label">{audioDetails.badgeLabel}{audioDetails.badgeLabel === "HiFi" && <CrystalIcon size={10} className="quality-badge__crystal" />}</span>
+                    </button>
 
-                {qualityMenuOpen && (
-                  <div className="fullscreen-dropdown-menu fullscreen-dropdown-menu--right">
-                    <div className="fullscreen-dropdown-menu__header">
-                      <div className="fullscreen-dropdown-menu__title">Текущий поток</div>
-                      <div className="fullscreen-dropdown-menu__current-details">
-                        <span className={`quality-badge quality-badge--${audioDetails.isHiRes ? "hires" : audioDetails.badgeLabel === "HiFi" ? "hifi" : audioDetails.badgeLabel === "HQ" ? "hq" : "sq"}`}>
-                          {audioDetails.badgeLabel}{audioDetails.badgeLabel === "HiFi" && <CrystalIcon size={10} className="quality-badge__crystal" />}
-                        </span>
-                        <span>{audioDetails.codec}</span>
-                        <span>•</span>
-                        <span>{audioDetails.channelsText}</span>
+                    {qualityMenuOpen && (
+                      <div className="fullscreen-dropdown-menu fullscreen-dropdown-menu--right">
+                        <div className="fullscreen-dropdown-menu__header">
+                          <div className="fullscreen-dropdown-menu__title">Текущий поток</div>
+                          <div className="fullscreen-dropdown-menu__current-details">
+                            <span className={`quality-badge quality-badge--${audioDetails.isHiRes ? "hires" : audioDetails.badgeLabel === "HiFi" ? "hifi" : audioDetails.badgeLabel === "HQ" ? "hq" : "sq"}`}>
+                              {audioDetails.badgeLabel}{audioDetails.badgeLabel === "HiFi" && <CrystalIcon size={10} className="quality-badge__crystal" />}
+                            </span>
+                            <span>{audioDetails.codec}</span>
+                            <span>•</span>
+                            <span>{audioDetails.channelsText}</span>
+                          </div>
+                          <div className="fullscreen-dropdown-menu__meta">
+                            {audioDetails.codec === 'FLAC'
+                              ? `${audioDetails.bitDepthText} • ${audioDetails.sampleRateText} • ${audioDetails.bitrateText}`
+                              : `${audioDetails.bitrateText} • ${audioDetails.sampleRateText}`}
+                          </div>
+                        </div>
+                        <div className="fullscreen-dropdown-menu__divider" />
+                        <button
+                          type="button"
+                          className={quality === 'flac' ? 'fullscreen-dropdown-menu__active' : ''}
+                          onClick={() => {
+                            setQuality('flac');
+                            setQualityMenuOpen(false);
+                          }}
+                        >
+                          HiFi <CrystalIcon size={10} className="quality-badge__crystal" /> • FLAC Lossless
+                        </button>
+                        <button
+                          type="button"
+                          className={quality === 'high' ? 'fullscreen-dropdown-menu__active' : ''}
+                          onClick={() => {
+                            setQuality('high');
+                            setQualityMenuOpen(false);
+                          }}
+                        >
+                          HQ • MP3 320 кбит/с
+                        </button>
+                        <button
+                          type="button"
+                          className={quality === 'mid' ? 'fullscreen-dropdown-menu__active' : ''}
+                          onClick={() => {
+                            setQuality('mid');
+                            setQualityMenuOpen(false);
+                          }}
+                        >
+                          SQ • MP3 128 кбит/с
+                        </button>
                       </div>
-                      <div className="fullscreen-dropdown-menu__meta">
-                        {audioDetails.codec === 'FLAC'
-                          ? `${audioDetails.bitDepthText} • ${audioDetails.sampleRateText} • ${audioDetails.bitrateText}`
-                          : `${audioDetails.bitrateText} • ${audioDetails.sampleRateText}`}
-                      </div>
-                    </div>
-                    <div className="fullscreen-dropdown-menu__divider" />
-                    <button
-                      type="button"
-                      className={quality === 'flac' ? 'fullscreen-dropdown-menu__active' : ''}
-                      onClick={() => {
-                        setQuality('flac');
-                        setQualityMenuOpen(false);
-                      }}
-                    >
-                      HiFi <CrystalIcon size={10} className="quality-badge__crystal" /> • FLAC Lossless
-                    </button>
-                    <button
-                      type="button"
-                      className={quality === 'high' ? 'fullscreen-dropdown-menu__active' : ''}
-                      onClick={() => {
-                        setQuality('high');
-                        setQualityMenuOpen(false);
-                      }}
-                    >
-                      HQ • MP3 320 кбит/с
-                    </button>
-                    <button
-                      type="button"
-                      className={quality === 'mid' ? 'fullscreen-dropdown-menu__active' : ''}
-                      onClick={() => {
-                        setQuality('mid');
-                        setQualityMenuOpen(false);
-                      }}
-                    >
-                      SQ • MP3 128 кбит/с
-                    </button>
+                    )}
                   </div>
-                )}
-              </div>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -1510,7 +1508,7 @@ export function FullscreenPlayer() {
                   )}
                 </div>
                 <div className="fullscreen-queue-item__meta">
-                  <div className="fullscreen-queue-item__title">{currentTrack.title}{currentTrack.has_flac && <span className="track-badge-hifi" title="HiFi Audio (Lossless)"><CrystalIcon size={11} /></span>}</div>
+                  <div className="fullscreen-queue-item__title"><span>{currentTrack.title}</span>{currentTrack.has_flac && <span className="track-badge-hifi" title="HiFi Audio (Lossless)"><CrystalIcon size={11} /></span>}</div>
                   <div className="fullscreen-queue-item__artist">{currentTrack.artist}</div>
                 </div>
                 <div className="fullscreen-queue-item__playing-badge">
@@ -1543,7 +1541,7 @@ export function FullscreenPlayer() {
                           )}
                         </div>
                         <div className="fullscreen-queue-item__meta">
-                          <div className="fullscreen-queue-item__title">{track.title}{track.has_flac && <span className="track-badge-hifi" title="HiFi Audio (Lossless)"><CrystalIcon size={11} /></span>}</div>
+                          <div className="fullscreen-queue-item__title"><span>{track.title}</span>{track.has_flac && <span className="track-badge-hifi" title="HiFi Audio (Lossless)"><CrystalIcon size={11} /></span>}</div>
                           <div className="fullscreen-queue-item__artist">{track.artist}</div>
                         </div>
                         <div className="fullscreen-queue-item__duration">

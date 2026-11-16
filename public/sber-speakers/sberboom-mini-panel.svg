@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 320" width="320" height="320">
+  <!-- Верхняя часть ребристого корпуса -->
+  <g id="body-shell" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M 20 116 L 26 254 C 48 267 100 274 160 274 C 220 274 272 267 294 254 L 300 116" fill="none" stroke-width="2.5" />
+  </g>
+
+  <!-- Верхняя крышка без внутреннего объёма -->
+  <g id="top-panel" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+    <!-- Внешний круглый контур -->
+    <ellipse cx="160" cy="116" rx="140" ry="62" fill="none" stroke-width="2.5" />
+    <!-- Нижняя кромка крышки -->
+    <path d="M 20 123 C 28 168 86 186 160 186 C 234 186 292 168 300 123" fill="none" stroke-width="1.7" stroke-opacity="0.75" />
+  </g>
+
+  <!-- Центральная кнопка с сердечком и элементы управления -->
+  <g id="controls" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+    <!-- Центральный круг (одиночный контур) -->
+    <ellipse cx="160" cy="115" rx="58" ry="24" fill="none" stroke-width="2.3" />
+    
+    <!-- Сердечко внутри кнопки (одиночный контур) -->
+    <path d="M 160 109 C 155 103 141 104 141 112 C 141 119 154 124 160 128 C 166 124 179 119 179 112 C 179 104 165 103 160 109 Z" fill="none" stroke-width="2.2" />
+
+    <!-- Минус и точка слева -->
+    <line x1="44" y1="115" x2="68" y2="115" stroke-width="2.6" />
+    <ellipse cx="84" cy="115" rx="3.2" ry="1.8" fill="none" stroke-width="1.8" />
+
+    <!-- Плюс и точка справа -->
+    <line x1="252" y1="115" x2="276" y2="115" stroke-width="2.6" />
+    <line x1="265.5" y1="109" x2="262.5" y2="121" stroke-width="2.4" />
+    <ellipse cx="236" cy="115" rx="3.2" ry="1.8" fill="none" stroke-width="1.8" />
+
+    <!-- Волна сверху -->
+    <path d="M 143 72 C 147 64 151 63 155 67 C 158 70 162 70 165 67 C 169 63 173 64 177 72" fill="none" stroke-width="2.5" />
+
+    <!-- Овальный индикатор снизу -->
+    <ellipse cx="160" cy="158" rx="16" ry="5.5" fill="none" stroke-width="2.2" />
+  </g>
+
+  <!-- Верхняя часть вертикальных рёбер корпуса -->
+  <g id="acoustic-ribs" stroke="currentColor" stroke-linecap="round" stroke-opacity="0.45">
+    <line x1="46" y1="176" x2="48" y2="246" stroke-width="1.8" />
+    <line x1="72" y1="186" x2="73" y2="254" stroke-width="2" />
+    <line x1="100" y1="193" x2="101" y2="259" stroke-width="2.1" />
+    <line x1="130" y1="197" x2="130" y2="262" stroke-width="2.2" />
+    <line x1="160" y1="199" x2="160" y2="263" stroke-width="2.2" />
+    <line x1="190" y1="197" x2="190" y2="262" stroke-width="2.2" />
+    <line x1="220" y1="193" x2="219" y2="259" stroke-width="2.1" />
+    <line x1="248" y1="186" x2="247" y2="254" stroke-width="2" />
+    <line x1="274" y1="176" x2="272" y2="246" stroke-width="1.8" />
+  </g>
+</svg>

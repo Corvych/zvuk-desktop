@@ -3,6 +3,7 @@ import { persist } from 'zustand/middleware';
 import {
   getPersonalWave,
   getArtistRadio,
+  getTrackRadio,
   getLikedTracks,
   getTracksByIds,
   getPlaylist,
@@ -59,6 +60,15 @@ export interface WaveArtist {
   palette?: string | null;
 }
 
+export interface WaveTrack {
+  id: string | number;
+  title: string;
+  artist?: string | null;
+  artistId?: string | number | null;
+  imageUrl?: string | null;
+  palette?: string | null;
+}
+
 interface PlayerState {
   // Current track
   currentTrack: Track | null;
@@ -86,11 +96,17 @@ interface PlayerState {
   isHiFi: boolean;
   quality: AudioQuality;
 
-  // Personal Wave & Artist Radio (Сила Звука)
+  // Crossfade
+  crossfadeEnabled: boolean;
+  crossfadeDuration: number; // seconds (1..12)
+
+  // Personal Wave, Artist Radio & Track Radio (Сила Звука)
   isWaveMode: boolean;
-  waveType: 'personal' | 'artist';
+  waveType: 'personal' | 'artist' | 'track';
   waveArtist: WaveArtist | null;
+  waveTrack: WaveTrack | null;
   artistRadioPlayedCount: number;
+  trackRadioPlayedCount: number;
   waveOptions: PersonalWaveOptions | null;
   waveMood: WaveMoodInfo | null;
 
@@ -110,6 +126,8 @@ interface PlayerState {
   playQueueTrack: (index: number) => void;
   startWave: (initialTracks: Track[], options?: PersonalWaveOptions | null) => void;
   startArtistWave: (artist: WaveArtist, initialTracks: Track[]) => void;
+  startTrackWave: (track: WaveTrack, initialTracks: Track[]) => void;
+  startTrackRadio: (track: Track) => Promise<void>;
   setWaveOptions: (options: PersonalWaveOptions) => void;
   setWaveMood: (mood: WaveMoodInfo | null) => void;
   addToQueue: (track: Track) => void;
@@ -126,6 +144,8 @@ interface PlayerState {
   setVolume: (volume: number) => void;
   toggleMute: () => void;
   setQuality: (q: AudioQuality) => void;
+  setCrossfadeEnabled: (enabled: boolean) => void;
+  setCrossfadeDuration: (seconds: number) => void;
 
   toggleShuffle: () => void;
   cycleRepeat: () => void;
@@ -168,13 +188,21 @@ export const usePlayerStore = create<PlayerState>()(
       isWaveMode: false,
       waveType: 'personal',
       waveArtist: null,
+      waveTrack: null,
       artistRadioPlayedCount: 0,
+      trackRadioPlayedCount: 0,
       waveOptions: null,
       waveMood: null,
       isFullscreenPlayerOpen: false,
       fullscreenTab: 'track',
       queueContext: null,
       isFetchingMoreQueue: false,
+      crossfadeEnabled: false,
+      crossfadeDuration: 5,
+
+      setCrossfadeEnabled: (enabled) => set({ crossfadeEnabled: enabled }),
+      setCrossfadeDuration: (seconds) =>
+        set({ crossfadeDuration: Math.max(1, Math.min(12, Math.round(seconds))) }),
 
       setTrack: (track, streamInfo) =>
         set({
@@ -188,7 +216,9 @@ export const usePlayerStore = create<PlayerState>()(
           isWaveMode: false,
           waveType: 'personal',
           waveArtist: null,
+          waveTrack: null,
           artistRadioPlayedCount: 0,
+          trackRadioPlayedCount: 0,
           queueContext: null,
         }),
 
@@ -205,7 +235,9 @@ export const usePlayerStore = create<PlayerState>()(
           isWaveMode: false,
           waveType: 'personal',
           waveArtist: null,
+          waveTrack: null,
           artistRadioPlayedCount: 0,
+          trackRadioPlayedCount: 0,
           queueContext: context ?? null,
           isFetchingMoreQueue: false,
         });
@@ -379,7 +411,9 @@ export const usePlayerStore = create<PlayerState>()(
           isWaveMode: true,
           waveType: 'personal',
           waveArtist: null,
+          waveTrack: null,
           artistRadioPlayedCount: 0,
+          trackRadioPlayedCount: 0,
           waveOptions: options ?? { popular: null, mood: 'energy:0.5,fun:0.5' },
           queue: initialTracks,
           queueIndex: 0,
@@ -409,7 +443,9 @@ export const usePlayerStore = create<PlayerState>()(
           isWaveMode: true,
           waveType: 'artist',
           waveArtist: resolvedArtist,
+          waveTrack: null,
           artistRadioPlayedCount: 0,
+          trackRadioPlayedCount: 0,
           waveOptions: null,
           queue: initialTracks,
           queueIndex: 0,
@@ -418,6 +454,62 @@ export const usePlayerStore = create<PlayerState>()(
           seekTarget: null,
           isPlaying: true,
         });
+      },
+
+      startTrackWave: (track, initialTracks) => {
+        let resolvedTrack = { ...track };
+        if (!resolvedTrack.palette || !resolvedTrack.imageUrl) {
+          const match = initialTracks.find((t) => String(t.id) === String(track.id));
+          if (match) {
+            if (!resolvedTrack.palette && match.palette) {
+              resolvedTrack.palette = match.palette;
+            }
+            if (!resolvedTrack.imageUrl && match.cover_url) {
+              resolvedTrack.imageUrl = match.cover_url;
+            }
+          }
+        }
+
+        set({
+          isWaveMode: true,
+          waveType: 'track',
+          waveArtist: null,
+          waveTrack: resolvedTrack,
+          artistRadioPlayedCount: 0,
+          trackRadioPlayedCount: 0,
+          waveOptions: null,
+          queue: initialTracks,
+          queueIndex: 0,
+          currentTrack: initialTracks[0] ?? null,
+          progress: 0,
+          seekTarget: null,
+          isPlaying: true,
+        });
+      },
+
+      startTrackRadio: async (track: Track) => {
+        try {
+          const res = await getTrackRadio(track.id, 0, 25);
+          if (res?.tracks && res.tracks.length > 0) {
+            let tracksToPlay = res.tracks;
+            if (!tracksToPlay.some((t) => String(t.id) === String(track.id))) {
+              tracksToPlay = [track, ...tracksToPlay];
+            }
+            get().startTrackWave(
+              {
+                id: track.id,
+                title: track.title,
+                artist: track.artist,
+                artistId: track.artist_id ?? track.artists?.[0]?.id,
+                imageUrl: track.cover_url,
+                palette: track.palette,
+              },
+              tracksToPlay
+            );
+          }
+        } catch (err) {
+          console.error('[playerStore] Failed to start track radio:', err);
+        }
       },
 
       setWaveOptions: (options) =>
@@ -454,7 +546,9 @@ export const usePlayerStore = create<PlayerState>()(
           isWaveMode,
           waveType,
           waveArtist,
+          waveTrack,
           artistRadioPlayedCount,
+          trackRadioPlayedCount,
           currentTrack,
           progress,
           waveOptions,
@@ -483,6 +577,26 @@ export const usePlayerStore = create<PlayerState>()(
                 }
               })
               .catch((err) => console.warn('[ArtistRadio] Failed to fetch next wave tracks:', err));
+          }
+        } else if (isWaveMode && waveType === 'track' && waveTrack) {
+          const nextPlayedCount = (trackRadioPlayedCount || 0) + 1;
+          set({ trackRadioPlayedCount: nextPlayedCount });
+
+          // If remaining tracks in queue <= 5, fetch more tracks with cursor = nextPlayedCount
+          const remainingInQueue = queue.length - (queueIndex + 1);
+          if (remainingInQueue <= 5) {
+            getTrackRadio(waveTrack.id, nextPlayedCount, 25)
+              .then((res) => {
+                if (res?.tracks && res.tracks.length > 0) {
+                  const currentQueue = get().queue;
+                  const tailIds = new Set(currentQueue.slice(-15).map((t) => t.id));
+                  const toAdd = res.tracks.filter((t) => !tailIds.has(t.id) && !isTrackHidden(t));
+                  if (toAdd.length > 0) {
+                    set((state) => ({ queue: [...state.queue, ...toAdd] }));
+                  }
+                }
+              })
+              .catch((err) => console.warn('[TrackRadio] Failed to fetch next wave tracks:', err));
           }
         } else if (isWaveMode && currentTrack) {
           // Standard personal wave replenishment
@@ -536,6 +650,27 @@ export const usePlayerStore = create<PlayerState>()(
                   }
                 } catch (e) {
                   console.error('[ArtistRadio] End of queue fetch failed:', e);
+                }
+              } else if (waveType === 'track' && waveTrack) {
+                // End of track radio queue reached, fetch synchronously
+                try {
+                  const res = await getTrackRadio(waveTrack.id, get().trackRadioPlayedCount || 0, 25);
+                  if (res?.tracks && res.tracks.length > 0) {
+                    const currentQueue = get().queue;
+                    const tailIds = new Set(currentQueue.slice(-15).map((t) => t.id));
+                    const newTracks = res.tracks.filter((t) => !tailIds.has(t.id));
+                    const toUse = newTracks.length > 0 ? newTracks : res.tracks;
+                    set({
+                      queue: [...currentQueue, ...toUse],
+                      queueIndex: currentQueue.length,
+                      currentTrack: toUse[0],
+                      progress: 0,
+                      isPlaying: true,
+                    });
+                    return;
+                  }
+                } catch (e) {
+                  console.error('[TrackRadio] End of queue fetch failed:', e);
                 }
               } else {
                 // If we reached the end of the queue in wave mode, fetch synchronously
@@ -700,6 +835,8 @@ export const usePlayerStore = create<PlayerState>()(
         shuffle: state.shuffle,
         repeat: state.repeat,
         quality: state.quality,
+        crossfadeEnabled: state.crossfadeEnabled,
+        crossfadeDuration: state.crossfadeDuration,
         sidePanelTab: state.sidePanelTab,
 
         // Playback state & Queue
@@ -714,7 +851,9 @@ export const usePlayerStore = create<PlayerState>()(
         isWaveMode: state.isWaveMode,
         waveType: state.waveType,
         waveArtist: state.waveArtist,
+        waveTrack: state.waveTrack,
         artistRadioPlayedCount: state.artistRadioPlayedCount,
+        trackRadioPlayedCount: state.trackRadioPlayedCount,
         waveOptions: state.waveOptions,
         waveMood: state.waveMood,
 

@@ -15,7 +15,7 @@ type SettingsTab = 'profile' | 'playback' | 'appearance' | 'integrations' | 'abo
 const VALID_TABS: SettingsTab[] = ['profile', 'playback', 'appearance', 'integrations', 'about'];
 
 const QUALITY_OPTIONS: { label: string; description: string; value: AudioQuality }[] = [
-  { label: 'HiFi (FLAC)', description: 'Без потерь', value: 'flac' },
+  { label: 'HiFi (FLAC)', description: 'Максимальное качество с серверов Звука (доступно по подписке)', value: 'flac' },
   { label: 'HQ (Высокое)', description: 'MP3 320 кбит/с', value: 'high' },
   { label: 'SQ (Среднее)', description: 'MP3 192 кбит/с', value: 'mid' },
 ];
@@ -23,8 +23,8 @@ const QUALITY_OPTIONS: { label: string; description: string; value: AudioQuality
 const CACHE_LIMIT_OPTIONS: { label: string; description: string; value: number }[] = [
   { label: '250 МБ', description: 'Экономный — минимум нагрузки на память (~1–2 трека)', value: 250 },
   { label: '500 МБ', description: 'Оптимальный (Рекомендуется) — стабильный буфер для Hi-Fi FLAC', value: 500 },
-  { label: '1024 МБ (1 ГБ)', description: 'Расширенный — запас для альбомов и непрерывных сессий (~10 треков)', value: 1024 },
-  { label: '2048 МБ (2 ГБ)', description: 'Максимальный — большой буфер для тяжелых плейлистов', value: 2048 },
+  { label: '1 ГБ', description: 'Расширенный — запас для альбомов и непрерывных сессий (~10 треков)', value: 1024 },
+  { label: '2 ГБ', description: 'Максимальный — большой буфер для тяжелых плейлистов', value: 2048 },
 ];
 
 const LYRICS_SOURCE_INFO: Record<
@@ -51,8 +51,8 @@ const LYRICS_SOURCE_INFO: Record<
     description: 'Официальные синхронизированные и построчные тексты сервиса Звук',
   },
   lrclib: {
-    title: 'База LRCLIB',
-    badge: 'LRCLIB',
+    title: 'LRCLIB',
+    badge: 'Сообщество',
     description: 'Глобальная открытая библиотека синхронизированных караоке-текстов (.lrc)',
   },
 };
@@ -82,7 +82,14 @@ export function SettingsPage() {
   };
 
   const { user, logout, resetSberIdAndSwitchAccount, openLoginModal } = useAuthStore();
-  const { quality, setQuality } = usePlayerStore();
+  const {
+    quality,
+    setQuality,
+    crossfadeEnabled,
+    crossfadeDuration,
+    setCrossfadeEnabled,
+    setCrossfadeDuration,
+  } = usePlayerStore();
   const {
     enableZvuk,
     enableBetterLyrics,
@@ -156,7 +163,7 @@ export function SettingsPage() {
     try {
       const found = await checkForUpdates(true);
       if (found) {
-        showToast('Найдено новое обновление!', 'success');
+        showToast('Найдено обновление!', 'success');
       } else {
         showToast('У вас установлена последняя версия', 'success');
       }
@@ -578,6 +585,97 @@ export function SettingsPage() {
                   }}
                 />
               ))}
+            </div>
+          </section>
+
+          {/* Crossfade Section */}
+          <section
+            style={{
+              padding: '20px',
+              background: 'var(--bg-secondary)',
+              borderRadius: 'var(--radius-lg)',
+              border: '1px solid var(--border-subtle)',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '4px' }}>
+              <h4 style={{ margin: 0 }}>Плавный переход (Кроссфейд)</h4>
+              <span
+                style={{
+                  fontSize: '11px',
+                  fontWeight: 700,
+                  padding: '2px 8px',
+                  borderRadius: '100px',
+                  background: crossfadeEnabled ? 'rgba(33, 160, 56, 0.15)' : 'rgba(255, 255, 255, 0.06)',
+                  color: crossfadeEnabled ? 'var(--accent)' : 'var(--text-muted)',
+                  border: crossfadeEnabled ? '1px solid rgba(33, 160, 56, 0.3)' : '1px solid var(--border-subtle)',
+                }}
+              >
+                {crossfadeEnabled ? `${crossfadeDuration} сек` : 'Выкл'}
+              </span>
+            </div>
+            <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '14px' }}>
+              Плавное затухание текущего трека с одновременным нарастанием следующего перед окончанием воспроизведения.
+            </p>
+
+            <ToggleRow
+              label="Включить кроссфейд между треками"
+              description="Работает при автоматическом переходе к следующему треку в очереди или потоке"
+              checked={crossfadeEnabled}
+              badge={crossfadeEnabled ? 'Активно' : 'Выкл'}
+              onChange={(val) => {
+                setCrossfadeEnabled(val);
+                showToast(
+                  val ? `Кроссфейд включен (${crossfadeDuration} сек)` : 'Кроссфейд выключен',
+                  'info'
+                );
+              }}
+            />
+
+            <div
+              style={{
+                marginTop: '14px',
+                padding: '12px 14px',
+                borderRadius: 'var(--radius-md)',
+                background: 'rgba(255, 255, 255, 0.03)',
+                border: '1px solid var(--border-subtle)',
+                opacity: crossfadeEnabled ? 1 : 0.5,
+                transition: 'opacity var(--transition-fast)',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+                <span style={{ fontSize: '13px', fontWeight: 500 }}>Длительность перехода</span>
+                <span style={{ fontSize: '13px', fontWeight: 700, color: 'var(--accent)', fontVariantNumeric: 'tabular-nums' }}>
+                  {crossfadeDuration} сек
+                </span>
+              </div>
+              <input
+                type="range"
+                min={1}
+                max={12}
+                step={1}
+                value={crossfadeDuration}
+                disabled={!crossfadeEnabled}
+                onChange={(e) => setCrossfadeDuration(Number(e.target.value))}
+                style={{
+                  width: '100%',
+                  accentColor: 'var(--accent)',
+                  cursor: crossfadeEnabled ? 'pointer' : 'not-allowed',
+                }}
+              />
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  fontSize: '11px',
+                  color: 'var(--text-muted)',
+                  marginTop: '4px',
+                  fontVariantNumeric: 'tabular-nums',
+                }}
+              >
+                <span>1 сек</span>
+                <span>6 сек</span>
+                <span>12 сек</span>
+              </div>
             </div>
           </section>
 

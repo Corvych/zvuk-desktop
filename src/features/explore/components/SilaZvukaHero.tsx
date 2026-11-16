@@ -1,25 +1,44 @@
 import { useState, useRef, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { usePlayerStore } from '../../player/playerStore';
-import { getPersonalWave, getArtistRadio, type PersonalWaveOptions } from '../../../api';
+import { getPersonalWave, getArtistRadio, getTrackRadio, type PersonalWaveOptions } from '../../../api';
 import { useAudioReactive } from '../../player/useAudioReactive';
 import { WaveTunerModal, type WaveTunerState } from './WaveTunerModal';
 import { computeWaveMood } from '../utils/waveMood';
 import { extractMonetThemeFromPalette, extractMonetFromImage, type MonetTheme } from '../../../lib/monetPalette';
 
+function StreamStageBars({ isPlaying, color }: { isPlaying: boolean; color: string }) {
+  return (
+    <span className="stream-stage__bars" aria-hidden="true">
+      <span
+        className={`stream-stage__bar ${isPlaying ? 'is-playing' : ''}`}
+        style={{ background: color }}
+      />
+      <span
+        className={`stream-stage__bar ${isPlaying ? 'is-playing' : ''}`}
+        style={{ background: color }}
+      />
+      <span
+        className={`stream-stage__bar ${isPlaying ? 'is-playing' : ''}`}
+        style={{ background: color }}
+      />
+    </span>
+  );
+}
+
 export function SilaZvukaHero() {
-  const navigate = useNavigate();
   const {
     currentTrack,
     isPlaying,
     isWaveMode,
     waveType,
     waveArtist,
+    waveTrack,
     waveMood,
     setWaveMood,
     togglePlay,
     startWave,
     startArtistWave,
+    startTrackWave,
     setWaveOptions,
     nextTrack,
   } = usePlayerStore();
@@ -31,6 +50,12 @@ export function SilaZvukaHero() {
   const [monetTheme, setMonetTheme] = useState<MonetTheme | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
+  const isFavoriteFlow =
+    isWaveMode &&
+    waveType === 'personal' &&
+    waveMood?.discovery === 'favorite' &&
+    waveMood.dominantEmotions.length === 0;
+
   useEffect(() => {
     if (waveType === 'artist' && waveArtist) {
       if (waveArtist.palette) {
@@ -40,10 +65,20 @@ export function SilaZvukaHero() {
       } else {
         setMonetTheme(null);
       }
+    } else if (waveType === 'track' && waveTrack) {
+      if (waveTrack.palette) {
+        setMonetTheme(extractMonetThemeFromPalette(waveTrack.palette));
+      } else if (waveTrack.imageUrl) {
+        extractMonetFromImage(waveTrack.imageUrl).then(setMonetTheme);
+      } else {
+        setMonetTheme(null);
+      }
+    } else if (isFavoriteFlow) {
+      extractMonetFromImage('/favourites_album_cover.jpg').then(setMonetTheme);
     } else {
       setMonetTheme(null);
     }
-  }, [waveType, waveArtist]);
+  }, [waveType, waveArtist, waveTrack, isFavoriteFlow]);
 
   // Close more menu when clicking outside
   useEffect(() => {
@@ -75,6 +110,21 @@ export function SilaZvukaHero() {
         }
       } catch (err) {
         console.error('[SilaZvukaHero] Failed to resume artist wave:', err);
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+
+    if (waveType === 'track' && waveTrack) {
+      try {
+        setLoading(true);
+        const res = await getTrackRadio(waveTrack.id, 0, 25);
+        if (res?.tracks && res.tracks.length > 0) {
+          startTrackWave(waveTrack, res.tracks);
+        }
+      } catch (err) {
+        console.error('[SilaZvukaHero] Failed to resume track wave:', err);
       } finally {
         setLoading(false);
       }
@@ -198,33 +248,106 @@ export function SilaZvukaHero() {
                 transition: 'border-color 0.4s ease-out, box-shadow 0.4s ease-out',
               }}
             >
-              <span
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'flex-end',
-                  gap: '2.5px',
-                  height: '14px',
-                  paddingBottom: '1px',
-                }}
-              >
-                {[1, 2, 3].map((bar) => (
-                  <span
-                    key={bar}
-                    style={{
-                      width: '3px',
-                      height: isPlaying ? `var(--audio-bar-${bar}, 6px)` : '4px',
-                      borderRadius: '2px',
-                      background: monetTheme ? monetTheme.accentColor : '#70dc55',
-                      transition: 'height 0.06s ease-out, background 0.4s ease-out',
-                    }}
-                  />
-                ))}
-              </span>
+              <StreamStageBars
+                isPlaying={isPlaying}
+                color={monetTheme ? monetTheme.accentColor : '#70dc55'}
+              />
               <span style={{ fontWeight: 600, color: '#FFFFFF' }}>{currentTrack?.title}</span>
               <span style={{ color: 'rgba(255,255,255,0.6)' }}>•</span>
               <span
                 style={{
                   color: monetTheme ? monetTheme.accentColor : '#70dc55',
+                  transition: 'color 0.4s ease-out',
+                }}
+              >
+                {currentTrack?.artist}
+              </span>
+            </div>
+          )}
+        </div>
+      ) : waveType === 'track' && waveTrack ? (
+        <div className="stream-stage__title-box">
+          <h1 className="stream-stage__line">В стиле трека</h1>
+          <h1
+            className="stream-stage__line stream-stage__line--accent"
+            style={{
+              color: monetTheme ? monetTheme.accentColor : '#70dc55',
+              textShadow: monetTheme
+                ? `0 0 32px rgba(${monetTheme.glowRgb}, 0.65), 0 0 12px rgba(${monetTheme.glowRgb}, 0.35)`
+                : `0 0 24px rgba(112, 220, 85, 0.4)`,
+              transition: 'color 0.4s ease-out, text-shadow 0.4s ease-out',
+            }}
+          >
+            {waveTrack.title}
+          </h1>
+          {waveTrack.artist && (
+            <div style={{ fontSize: '15px', color: 'rgba(255,255,255,0.7)', marginTop: '2px', fontWeight: 500 }}>
+              {waveTrack.artist}
+            </div>
+          )}
+
+          {/* Live track preview badge if streaming */}
+          {isCurrentlyInWave && (
+            <div
+              className="stream-stage__track-info"
+              style={{
+                borderColor: monetTheme ? `rgba(${monetTheme.glowRgb}, 0.35)` : undefined,
+                boxShadow: monetTheme ? `0 4px 20px rgba(${monetTheme.glowRgb}, 0.15)` : undefined,
+                transition: 'border-color 0.4s ease-out, box-shadow 0.4s ease-out',
+              }}
+            >
+              <StreamStageBars
+                isPlaying={isPlaying}
+                color={monetTheme ? monetTheme.accentColor : '#70dc55'}
+              />
+              <span style={{ fontWeight: 600, color: '#FFFFFF' }}>{currentTrack?.title}</span>
+              <span style={{ color: 'rgba(255,255,255,0.6)' }}>•</span>
+              <span
+                style={{
+                  color: monetTheme ? monetTheme.accentColor : '#70dc55',
+                  transition: 'color 0.4s ease-out',
+                }}
+              >
+                {currentTrack?.artist}
+              </span>
+            </div>
+          )}
+        </div>
+      ) : isFavoriteFlow ? (
+        <div className="stream-stage__title-box">
+          <h1 className="stream-stage__line">Поток</h1>
+          <h1
+            className="stream-stage__line stream-stage__line--accent"
+            style={{
+              color: monetTheme ? monetTheme.accentColor : '#ef4444',
+              textShadow: monetTheme
+                ? `0 0 32px rgba(${monetTheme.glowRgb}, 0.65), 0 0 12px rgba(${monetTheme.glowRgb}, 0.35)`
+                : '0 0 24px rgba(239, 68, 68, 0.4)',
+              transition: 'color 0.4s ease-out, text-shadow 0.4s ease-out',
+            }}
+          >
+            по любимому
+          </h1>
+
+          {/* Live track preview badge if streaming */}
+          {isCurrentlyInWave && (
+            <div
+              className="stream-stage__track-info"
+              style={{
+                borderColor: monetTheme ? `rgba(${monetTheme.glowRgb}, 0.35)` : undefined,
+                boxShadow: monetTheme ? `0 4px 20px rgba(${monetTheme.glowRgb}, 0.15)` : undefined,
+                transition: 'border-color 0.4s ease-out, box-shadow 0.4s ease-out',
+              }}
+            >
+              <StreamStageBars
+                isPlaying={isPlaying}
+                color={monetTheme ? monetTheme.accentColor : '#ef4444'}
+              />
+              <span style={{ fontWeight: 600, color: '#FFFFFF' }}>{currentTrack?.title}</span>
+              <span style={{ color: 'rgba(255,255,255,0.6)' }}>•</span>
+              <span
+                style={{
+                  color: monetTheme ? monetTheme.accentColor : '#ef4444',
                   transition: 'color 0.4s ease-out',
                 }}
               >
@@ -258,28 +381,10 @@ export function SilaZvukaHero() {
           {/* Live track preview badge if streaming */}
           {isCurrentlyInWave && (
             <div className="stream-stage__track-info">
-              <span
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'flex-end',
-                  gap: '2.5px',
-                  height: '14px',
-                  paddingBottom: '1px',
-                }}
-              >
-                {[1, 2, 3].map((bar) => (
-                  <span
-                    key={bar}
-                    style={{
-                      width: '3px',
-                      height: isPlaying ? `var(--audio-bar-${bar}, 6px)` : '4px',
-                      borderRadius: '2px',
-                      background: `rgb(var(--wave-mood-rgb, 112, 220, 85))`,
-                      transition: 'height 0.06s ease-out, background 0.3s ease-out',
-                    }}
-                  />
-                ))}
-              </span>
+              <StreamStageBars
+                isPlaying={isPlaying}
+                color="rgb(var(--wave-mood-rgb, 112, 220, 85))"
+              />
               <span style={{ fontWeight: 600, color: '#FFFFFF' }}>{currentTrack?.title}</span>
               <span style={{ color: 'rgba(255,255,255,0.6)' }}>•</span>
               <span style={{ color: `rgb(var(--wave-mood-rgb, 112, 220, 85))` }}>{currentTrack?.artist}</span>
@@ -295,28 +400,10 @@ export function SilaZvukaHero() {
           {/* Live track preview badge if streaming */}
           {isCurrentlyInWave && (
             <div className="stream-stage__track-info">
-              <span
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'flex-end',
-                  gap: '2.5px',
-                  height: '14px',
-                  paddingBottom: '1px',
-                }}
-              >
-                {[1, 2, 3].map((bar) => (
-                  <span
-                    key={bar}
-                    style={{
-                      width: '3px',
-                      height: isPlaying ? `var(--audio-bar-${bar}, 6px)` : '4px',
-                      borderRadius: '2px',
-                      background: '#70dc55',
-                      transition: 'height 0.06s ease-out',
-                    }}
-                  />
-                ))}
-              </span>
+              <StreamStageBars
+                isPlaying={isPlaying}
+                color="#70dc55"
+              />
               <span style={{ fontWeight: 600, color: '#FFFFFF' }}>{currentTrack?.title}</span>
               <span style={{ color: 'rgba(255,255,255,0.6)' }}>•</span>
               <span style={{ color: '#70dc55' }}>{currentTrack?.artist}</span>
@@ -328,7 +415,7 @@ export function SilaZvukaHero() {
       {/* Bottom Controls Bar */}
       <div className="stream-stage__footer">
         <div className="stream-stage__left-btns">
-          {waveType === 'artist' ? (
+          {waveType === 'artist' || waveType === 'track' || isFavoriteFlow ? (
             <button
               type="button"
               className="stream-stage__reset-btn"
@@ -408,7 +495,8 @@ export function SilaZvukaHero() {
                   position: 'absolute',
                   bottom: '56px',
                   left: 0,
-                  width: '210px',
+                  minWidth: '230px',
+                  whiteSpace: 'nowrap',
                   background: 'var(--bg-elevated)',
                   border: '1px solid var(--border)',
                   borderRadius: 'var(--radius-md)',
@@ -424,6 +512,9 @@ export function SilaZvukaHero() {
                 <button
                   className="btn btn--ghost"
                   style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '10px',
                     justifyContent: 'flex-start',
                     fontSize: '13px',
                     padding: '8px 12px',
@@ -435,28 +526,26 @@ export function SilaZvukaHero() {
                     setShowTuner(true);
                   }}
                 >
-                  🎚️ Настроить волну
-                </button>
-                <button
-                  className="btn btn--ghost"
-                  style={{
-                    justifyContent: 'flex-start',
-                    fontSize: '13px',
-                    padding: '8px 12px',
-                    width: '100%',
-                    color: 'var(--text-primary)',
-                  }}
-                  onClick={() => {
-                    setShowMenu(false);
-                    navigate('/sound-energy');
-                  }}
-                >
-                  🎧 Страница Силы Звука
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, opacity: 0.85 }}>
+                    <line x1="4" y1="21" x2="4" y2="14" />
+                    <line x1="4" y1="10" x2="4" y2="3" />
+                    <line x1="12" y1="21" x2="12" y2="12" />
+                    <line x1="12" y1="8" x2="12" y2="3" />
+                    <line x1="20" y1="21" x2="20" y2="16" />
+                    <line x1="20" y1="12" x2="20" y2="3" />
+                    <line x1="1" y1="14" x2="7" y2="14" />
+                    <line x1="9" y1="8" x2="15" y2="8" />
+                    <line x1="17" y1="16" x2="23" y2="16" />
+                  </svg>
+                  <span>Настроить волну</span>
                 </button>
                 {isCurrentlyInWave && (
                   <button
                     className="btn btn--ghost"
                     style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '10px',
                       justifyContent: 'flex-start',
                       fontSize: '13px',
                       padding: '8px 12px',
@@ -468,12 +557,19 @@ export function SilaZvukaHero() {
                       nextTrack(true);
                     }}
                   >
-                    ⏭️ Следующий трек
+                    <svg width="15" height="15" viewBox="0 0 16 16" fill="none" style={{ flexShrink: 0, opacity: 0.85 }}>
+                      <path d="M4 3L10 8L4 13" fill="currentColor" />
+                      <path d="M12 3V13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                    </svg>
+                    <span>Следующий трек</span>
                   </button>
                 )}
                 <button
                   className="btn btn--ghost"
                   style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '10px',
                     justifyContent: 'flex-start',
                     fontSize: '13px',
                     padding: '8px 12px',
@@ -485,12 +581,19 @@ export function SilaZvukaHero() {
                     handleStartWave();
                   }}
                 >
-                  🔄 Перезапустить поток
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, opacity: 0.85 }}>
+                    <polyline points="23 4 23 10 17 10" />
+                    <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+                  </svg>
+                  <span>Перезапустить поток</span>
                 </button>
-                {waveType === 'artist' && (
+                {(waveType === 'artist' || waveType === 'track') && (
                   <button
                     className="btn btn--ghost"
                     style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '10px',
                       justifyContent: 'flex-start',
                       fontSize: '13px',
                       padding: '8px 12px',
@@ -502,7 +605,14 @@ export function SilaZvukaHero() {
                       handleResetWave();
                     }}
                   >
-                    ✨ Обычный персональный поток
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, opacity: 0.85 }}>
+                      <path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3z" />
+                      <path d="M20 3v4" />
+                      <path d="M22 5h-4" />
+                      <path d="M4 17v2" />
+                      <path d="M5 18H3" />
+                    </svg>
+                    <span>Обычный персональный поток</span>
                   </button>
                 )}
               </div>

@@ -452,6 +452,17 @@ export const getArtistRadio = (
     limit: limit ?? 25,
   });
 
+export const getTrackRadio = (
+  trackId: string | number,
+  cursor?: number,
+  limit?: number
+) =>
+  invoke<ArtistRadioResult>('get_track_radio', {
+    trackId: String(trackId),
+    cursor: cursor ?? 0,
+    limit: limit ?? 25,
+  });
+
 export const getListeningHistory = (limit?: number, offset?: number) =>
   invoke<ListeningHistoryItem[]>('get_listening_history', { limit, offset });
 
@@ -462,7 +473,7 @@ export const getCacheLimitMb = () =>
 export const setCacheLimitMb = (limitMb: number) =>
   invoke<void>('set_cache_limit_mb', { limitMb });
 
-export type CoverSize = 'small' | 'medium' | 'large';
+export type CoverSize = 'small' | 'medium' | 'large' | string;
 
 /**
  * Returns image URL with the specified resolution size query parameter.
@@ -548,6 +559,15 @@ export async function fetchProxy(
     throw new Error(`HTTP error ${res.status}`);
   }
   return res.text();
+}
+
+export async function resolveRedirect(url: string): Promise<string> {
+  if (isTauri()) {
+    return invoke<string>('resolve_redirect', { url });
+  }
+  // Browser fallback (may be restricted by CORS)
+  const res = await fetch(url, { method: 'GET', redirect: 'follow' });
+  return res.url || url;
 }
 
 

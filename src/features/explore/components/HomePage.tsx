@@ -5,6 +5,7 @@ import {
   getEditorialPlaylists,
   getPlaylist,
   getAlbum,
+  getPersonalWave,
   getMusicRecommendations,
   getListeningHistory,
   type Track,
@@ -21,7 +22,7 @@ import { useFavouritesStore } from '../../favourites/favouritesStore';
 
 
 export function HomePage() {
-  const { setQueue } = usePlayerStore();
+  const { setQueue, startWave } = usePlayerStore();
   const navigate = useNavigate();
 
   // Количество лайков берём реактивно из стора, чтобы обновлялся мгновенно
@@ -175,7 +176,7 @@ export function HomePage() {
         navigate('/favourites');
         break;
       case 'PersonalWave':
-        navigate('/sound-energy');
+        window.scrollTo({ top: 0, behavior: 'smooth' });
         break;
       default:
         break;
@@ -205,7 +206,10 @@ export function HomePage() {
       } else if (item.itemType === 'FavoriteTracks') {
         handlePlayLiked();
       } else if (item.itemType === 'PersonalWave') {
-        navigate('/sound-energy');
+        const tracks = await getPersonalWave(null, 15);
+        if (tracks && tracks.length > 0) {
+          startWave(tracks);
+        }
       } else if (item.itemType === 'Artist') {
         navigate(`/artist/${item.id}`);
       }

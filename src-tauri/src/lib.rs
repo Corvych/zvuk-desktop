@@ -4,6 +4,7 @@ mod commands;
 mod discord_rpc;
 mod error;
 mod models;
+mod sbercast;
 mod state;
 mod token_manager;
 #[cfg(windows)]
@@ -11,18 +12,37 @@ pub mod taskbar;
 
 
 use state::AppState;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 use tauri::{Emitter, Manager};
 
 pub use commands::settings::apply_cache_browser_args;
+
+static PENDING_TASKBAR_ACTION: Mutex<Option<String>> = Mutex::new(None);
+static TASKBAR_LISTENER_READY: AtomicBool = AtomicBool::new(false);
 
 #[tauri::command]
 fn get_cli_args() -> Vec<String> {
     std::env::args().collect()
 }
 
+#[tauri::command]
+fn take_pending_taskbar_action() -> Option<String> {
+    TASKBAR_LISTENER_READY.store(true, Ordering::SeqCst);
+    PENDING_TASKBAR_ACTION.lock().unwrap().take()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     commands::settings::apply_cache_browser_args();
+
+    #[cfg(windows)]
+    {
+        taskbar::set_process_app_user_model_id();
+        if let Some(action) = taskbar::parse_taskbar_action_from_args(std::env::args()) {
+            *PENDING_TASKBAR_ACTION.lock().unwrap() = Some(action.to_string());
+        }
+    }
 
     env_logger::init();
 
@@ -33,6 +53,15 @@ pub fn run() {
                 let _ = window.unminimize();
                 let _ = window.show();
                 let _ = window.set_focus();
+            }
+            #[cfg(windows)]
+            if let Some(action) = taskbar::parse_taskbar_action_from_args(&argv) {
+                if TASKBAR_LISTENER_READY.load(Ordering::SeqCst) {
+                    let _ = app.emit("taskbar-action", action);
+                } else {
+                    *PENDING_TASKBAR_ACTION.lock().unwrap() = Some(action.to_string());
+                }
+                return;
             }
             let _ = app.emit("deep-link-received", argv);
         }))
@@ -108,12 +137,14 @@ pub fn run() {
                 }
             }
             commands::auth::start_global_auth_listener(app.handle().clone());
+            app.manage(std::sync::Arc::new(sbercast::SberCastManager::new(app.handle().clone())));
             #[cfg(windows)]
             audio_session::windows_audio::set_audio_session_name_async("Zvuk Desktop");
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             get_cli_args,
+            take_pending_taskbar_action,
             // Window controls
             commands::window::window_minimize,
             commands::window::window_toggle_maximize,
@@ -139,6 +170,8 @@ pub fn run() {
             commands::tracks::get_lyrics,
             commands::tracks::fetch_audio_key,
             commands::tracks::fetch_proxy,
+            commands::tracks::fetch_image_bytes,
+            commands::tracks::resolve_redirect,
 
             // Search
             commands::search::search,
@@ -175,6 +208,7 @@ pub fn run() {
             // Recommendations / Sound Energy / Personal Wave
             commands::recommendations::get_personal_wave,
             commands::recommendations::get_artist_radio,
+            commands::recommendations::get_track_radio,
             commands::recommendations::get_flow,
             commands::recommendations::tune_flow,
             commands::recommendations::get_music_recommendations,
@@ -189,6 +223,30 @@ pub fn run() {
             commands::discord::get_discord_status,
             // Updater
             commands::updater::download_and_install_update,
+            // SberCast
+            commands::sbercast::sbercast_discover_devices,
+            commands::sbercast::sbercast_add_manual_device,
+            commands::sbercast::sbercast_pair_device,
+            commands::sbercast::sbercast_connect_device,
+            commands::sbercast::sbercast_disconnect,
+            commands::sbercast::sbercast_get_status,
+            commands::sbercast::sbercast_get_saved_devices,
+            commands::sbercast::sbercast_remove_saved_device,
+            commands::sbercast::sbercast_play_deeplink,
+            commands::sbercast::sbercast_play_track,
+            commands::sbercast::sbercast_play_playlist,
+            commands::sbercast::sbercast_play_artist,
+            commands::sbercast::sbercast_play_release,
+            commands::sbercast::sbercast_media_play,
+            commands::sbercast::sbercast_media_pause,
+            commands::sbercast::sbercast_media_next,
+            commands::sbercast::sbercast_media_prev,
+            commands::sbercast::sbercast_media_like,
+            commands::sbercast::sbercast_media_dislike,
+            commands::sbercast::sbercast_media_shuffle,
+            commands::sbercast::sbercast_media_repeat,
+            commands::sbercast::sbercast_set_volume,
+            commands::sbercast::sbercast_seek,
         ])
 
         .run(tauri::generate_context!())

@@ -5,10 +5,12 @@ import { usePlayerStore } from '../../player/playerStore';
 import { useFavouritesStore } from '../favouritesStore';
 import { formatTime, pluralizeTracks } from '../../../lib/formatters';
 import { ArtistLinks } from '../../../components/ArtistLinks';
-import { extractMonetFromImage, type MonetTheme } from '../../../lib/monetPalette';
+import { extractMonetFromImage, extractMonetThemeFromPalette, type MonetTheme } from '../../../lib/monetPalette';
+import { useAudioReactive } from '../../player/useAudioReactive';
 import { LikeButton } from '../../../components/LikeButton';
 import { CrystalIcon } from '../../../components/CrystalIcon';
 import { usePlaylistModalStore } from '../../playlists/playlistModalStore';
+import { showToast } from '../../../components/Toast';
 
 type Tab = 'tracks' | 'albums';
 
@@ -27,6 +29,10 @@ function formatTrackCount(count: number): string {
 export function FavouritesPage() {
   const navigate = useNavigate();
   const location = useLocation();
+
+  // Keep audio reactive CSS variables active for backdrop & flow glow
+  useAudioReactive();
+
   const [activeTab, setActiveTab] = useState<Tab>('tracks');
   const [hoveredTrackIndex, setHoveredTrackIndex] = useState<number | null>(null);
   const [waveLoading, setWaveLoading] = useState(false);
@@ -34,6 +40,9 @@ export function FavouritesPage() {
   const [favoriteFlowTracks, setFavoriteFlowTracks] = useState<Track[]>([]);
   const flowRequestRef = useRef<Promise<Track[]> | null>(null);
   const [flowTheme, setFlowTheme] = useState<MonetTheme | null>(null);
+  const [backdropTheme, setBackdropTheme] = useState<MonetTheme>(() =>
+    extractMonetThemeFromPalette('#a88cf8 #7e6cf0 #d2b6ff')
+  );
 
   const isLiked = useFavouritesStore((s) => s.isLiked);
   const toggleLikeTrack = useFavouritesStore((s) => s.toggleLikeTrack);
@@ -72,6 +81,7 @@ export function FavouritesPage() {
     setWaveMood,
     isWaveMode,
     waveMood,
+    startTrackRadio,
   } = usePlayerStore();
 
   const isFavoriteWaveActive = isWaveMode && waveMood?.discovery === 'favorite';
@@ -360,7 +370,7 @@ export function FavouritesPage() {
     }
 
     setWaveMood({
-      activeRgb: flowTheme?.glowRgb || '152, 175, 244',
+      activeRgb: backdropTheme?.glowRgb || flowTheme?.glowRgb || '152, 175, 244',
       dominantEmotions: [],
       pad: { x: 0, y: 0 },
       discovery: 'favorite',
@@ -412,10 +422,6 @@ export function FavouritesPage() {
     return covers;
   }, [favoriteFlowTracks, likedTracks]);
 
-  const flowTitle =
-    (favoriteFlowTracks.length > 0 ? favoriteFlowTracks[0]?.title : likedTracks[0]?.title) ||
-    'Поток по любимому';
-
   const flowSubtitle = useMemo(() => {
     const sourceTracks = favoriteFlowTracks.length > 0 ? favoriteFlowTracks : likedTracks;
     const artists = Array.from(
@@ -426,6 +432,26 @@ export function FavouritesPage() {
       : 'Ваша любимая музыка и похожие треки';
   }, [favoriteFlowTracks, likedTracks]);
 
+  // Extract Monet theme from Favourites cover artwork for frameless hero backdrop
+  useEffect(() => {
+    extractMonetFromImage('/favourites_album_cover.jpg').then(setBackdropTheme);
+  }, []);
+
+  // Synchronize backdrop palette with root document for sidebar & titlebar glow bleed
+  useEffect(() => {
+    if (!backdropTheme) return;
+    const root = document.documentElement;
+    root.style.setProperty('--artist-glow-rgb', backdropTheme.glowRgb);
+    root.style.setProperty('--artist-secondary-rgb', backdropTheme.secondaryRgb);
+    root.style.setProperty('--artist-tertiary-rgb', backdropTheme.tertiaryRgb);
+
+    return () => {
+      root.style.removeProperty('--artist-glow-rgb');
+      root.style.removeProperty('--artist-secondary-rgb');
+      root.style.removeProperty('--artist-tertiary-rgb');
+    };
+  }, [backdropTheme]);
+
   // Extract color theme from the cover of the first track in favorite flow (or liked tracks)
   useEffect(() => {
     const flowTrack = favoriteFlowTracks[0];
@@ -434,43 +460,79 @@ export function FavouritesPage() {
     extractMonetFromImage(sourceTrack.cover_url, sourceTrack.palette).then(setFlowTheme);
   }, [favoriteFlowTracks, likedTracks]);
 
-  const flowCardStyle = useMemo(() => {
-    if (!flowTheme) return undefined;
-    return {
-      background: `linear-gradient(145deg, rgba(${flowTheme.glowRgb}, 0.95) 0%, rgba(${flowTheme.secondaryRgb}, 0.85) 100%)`,
-      boxShadow: `0 12px 32px rgba(${flowTheme.glowRgb}, 0.35)`,
-      '--flow-glow-rgb': flowTheme.glowRgb,
-      '--flow-secondary-rgb': flowTheme.secondaryRgb,
-    } as React.CSSProperties;
-  }, [flowTheme]);
-
   const isInitialLoading =
     activeTab === 'tracks'
       ? !tracksInitialized && tracksLoading
       : !albumsInitialized && albumsLoading;
 
   return (
-    <div className="page-enter page-enter-active">
-      {/* ─── Hero Section (3-Column Layout) ─────────────────────────────────── */}
-      <div className="favorites-hero-grid">
+    <div
+      className="detail-page artist-page-container page-enter page-enter-active"
+      style={{
+        '--artist-glow-rgb': backdropTheme.glowRgb,
+        '--artist-secondary-rgb': backdropTheme.secondaryRgb,
+        '--artist-tertiary-rgb': backdropTheme.tertiaryRgb,
+        '--artist-gradient': backdropTheme.gradient,
+        '--artist-accent-color': backdropTheme.accentColor,
+        '--accent': backdropTheme.accentColor,
+        '--accent-light': backdropTheme.accentColor,
+        '--accent-muted': `rgba(${backdropTheme.glowRgb}, 0.15)`,
+        '--accent-glow': `rgba(${backdropTheme.glowRgb}, 0.45)`,
+      } as React.CSSProperties}
+    >
+      {/* ─── Favourites Backdrop Artwork (Frameless Right-Flank Background Bleed with Vignette) ─── */}
+      <div className="artist-backdrop favorites-backdrop" aria-hidden="true">
+        <div
+          className={`artist-backdrop__glow ${(isLikedTracksPlaying || isFavoriteWavePlaying) ? 'artist-backdrop__glow--reactive' : ''}`}
+        >
+          <div className="artist-backdrop__glow-outer" />
+          <div className="artist-backdrop__glow-chromatic">
+            <img
+              src="/favourites_album_cover.jpg"
+              alt=""
+              className="artist-backdrop__glow-chromatic-img favorites-backdrop__chromatic-img"
+            />
+          </div>
+          <div className="artist-backdrop__glow-rim" />
+          <div className="artist-backdrop__glow-inner" />
+        </div>
+
+        <div className="artist-backdrop__photo-wrap">
+          <img
+            src="/favourites_album_cover.jpg"
+            alt=""
+            className="artist-backdrop__img favorites-backdrop__img"
+          />
+          <div className="artist-backdrop__vignette" />
+        </div>
+      </div>
+
+      {/* ─── Hero Section (Mirrors Artist Detail Header) ─────────────────────── */}
+      <div className="artist-hero-grid favorites-hero-grid--artist">
         {/* Left Column: Info & Actions */}
-        <div className="favorites-hero__left">
+        <div className="artist-hero__left">
           <div>
-            <div className="favorites-hero__badge">Плейлист</div>
-            <h1 className="favorites-hero__title">Любимое</h1>
-            <div className="favorites-hero__count">
-              {tracksTotal !== null && tracksTotal > 0
-                ? formatTrackCount(tracksTotal)
-                : '0 треков'}
+            <div className="artist-hero__badge">Плейлист</div>
+            <h1 className="artist-hero__title">Любимое</h1>
+
+            <div className="artist-hero__meta">
+              <span className="artist-hero__followers">
+                {tracksTotal !== null && tracksTotal > 0
+                  ? formatTrackCount(tracksTotal)
+                  : '0 треков'}
+              </span>
             </div>
-            <p className="favorites-hero__desc">
-              Включай, когда нужно доказать, что у тебя отличный музыкальный вкус.
-            </p>
+
+            <div className="artist-hero__bio">
+              <p className="artist-hero__bio-text artist-hero__bio-text--expanded">
+                Включай, когда нужно доказать, что у тебя отличный музыкальный вкус.
+              </p>
+            </div>
           </div>
 
-          <div className="favorites-hero__actions">
+          <div className="artist-hero__actions">
             <button
-              className="favorites-hero__play-btn"
+              className="artist-hero__play-btn"
               onClick={handlePlayAll}
               disabled={likedTracks.length === 0}
               title={isLikedTracksPlaying ? 'Приостановить' : 'Слушать любимые треки'}
@@ -494,7 +556,7 @@ export function FavouritesPage() {
             </button>
 
             <button
-              className="favorites-hero__shuffle-btn"
+              className="artist-hero__shuffle-btn"
               onClick={handleShufflePlay}
               disabled={likedTracks.length === 0}
               title="Перемешать"
@@ -509,84 +571,73 @@ export function FavouritesPage() {
             </button>
           </div>
         </div>
+      </div>
 
-        {/* Middle Column: Dynamic "Поток по любимому" Card */}
-        <div
-          className={`favorites-flow-card ${isFavoriteWavePlaying ? 'favorites-flow-card--playing' : ''}`}
-          style={flowCardStyle}
-          onClick={handleStartFavoriteWave}
-          title={isFavoriteWavePlaying ? 'Приостановить поток' : 'Запустить поток по любимому'}
-        >
-          <div className="favorites-flow-card__label">ПОТОК ПО ЛЮБИМОМУ</div>
-          <div className="favorites-flow-card__title" title={flowTitle}>
-            {flowTitle}
-          </div>
-          <div className="favorites-flow-card__subtitle" title={flowSubtitle}>
-            {flowSubtitle}
-          </div>
+      {/* ─── "Поток по любимому" Banner ─────────────────────────────────────── */}
+      <div
+        className={`artist-flow-banner ${isFavoriteWavePlaying ? 'artist-flow-banner--playing' : ''}`}
+        style={
+          flowTheme
+            ? ({
+                '--artist-glow-rgb': flowTheme.glowRgb,
+                '--artist-secondary-rgb': flowTheme.secondaryRgb,
+                '--artist-accent-color': flowTheme.accentColor,
+              } as React.CSSProperties)
+            : undefined
+        }
+        onClick={handleStartFavoriteWave}
+        title={isFavoriteWavePlaying ? 'Приостановить поток' : 'Запустить поток по любимому'}
+      >
+        <div className="artist-flow-banner__bottom-glow" aria-hidden="true" />
 
-          <div className="favorites-flow-card__media">
-            {/* Left audio wave bars */}
-            <div className="favorites-flow-card__wave">
-              <span className="favorites-flow-card__wave-bar" style={{ height: '12px' }} />
-              <span className="favorites-flow-card__wave-bar" style={{ height: '22px' }} />
-              <span className="favorites-flow-card__wave-bar" style={{ height: '14px' }} />
-              <span className="favorites-flow-card__wave-bar" style={{ height: '26px' }} />
-              <span className="favorites-flow-card__wave-bar" style={{ height: '10px' }} />
-            </div>
-
-            {/* Fanned 3-cover stack */}
-            <div className="favorites-flow-card__covers">
-              {flowCovers.length > 1 && (
-                <div
-                  className="favorites-flow-card__cover favorites-flow-card__cover--left"
-                  style={{ backgroundImage: `url(${flowCovers[1]})` }}
-                />
-              )}
-              {flowCovers.length > 2 && (
-                <div
-                  className="favorites-flow-card__cover favorites-flow-card__cover--right"
-                  style={{ backgroundImage: `url(${flowCovers[2]})` }}
-                />
-              )}
+        <div className="artist-flow-banner__content">
+          <div className="artist-flow-banner__covers">
+            {flowCovers.length > 2 && (
               <div
-                className="favorites-flow-card__cover favorites-flow-card__cover--center"
-                style={{
-                  backgroundImage: `url(${flowCovers[0] || '/favourites_album_cover.jpg'})`,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                }}
-              >
-                {(waveLoading || (flowLoading && favoriteFlowTracks.length === 0)) && (
-                  <div
-                    style={{
-                      width: '18px',
-                      height: '18px',
-                      border: '2px solid rgba(255,255,255,0.3)',
-                      borderTopColor: '#FFFFFF',
-                      borderRadius: '50%',
-                      animation: 'spin 0.8s linear infinite',
-                    }}
-                  />
-                )}
-              </div>
-            </div>
-
-            {/* Right audio wave bars */}
-            <div className="favorites-flow-card__wave">
-              <span className="favorites-flow-card__wave-bar" style={{ height: '10px' }} />
-              <span className="favorites-flow-card__wave-bar" style={{ height: '26px' }} />
-              <span className="favorites-flow-card__wave-bar" style={{ height: '16px' }} />
-              <span className="favorites-flow-card__wave-bar" style={{ height: '24px' }} />
-              <span className="favorites-flow-card__wave-bar" style={{ height: '12px' }} />
+                className="artist-flow-banner__cover artist-flow-banner__cover--back"
+                style={{ backgroundImage: `url(${flowCovers[2]})` }}
+              />
+            )}
+            {flowCovers.length > 1 && (
+              <div
+                className="artist-flow-banner__cover artist-flow-banner__cover--mid"
+                style={{ backgroundImage: `url(${flowCovers[1]})` }}
+              />
+            )}
+            <div
+              className="artist-flow-banner__cover artist-flow-banner__cover--front"
+              style={{ backgroundImage: `url(${flowCovers[0] || '/favourites_album_cover.jpg'})` }}
+            >
+              {(waveLoading || (flowLoading && favoriteFlowTracks.length === 0)) && (
+                <div className="artist-flow-banner__spinner" />
+              )}
             </div>
           </div>
-        </div>
 
-        {/* Right Column: Favorites Artwork Cover */}
-        <div className="favorites-hero__artwork">
-          <img src="/favourites_album_cover.jpg" alt="Любимое" />
+          <div className="artist-flow-banner__info">
+            <div className="artist-flow-banner__title">Поток по любимому</div>
+            <div className="artist-flow-banner__subtitle">{flowSubtitle}</div>
+          </div>
+
+          <div className="artist-flow-banner__action">
+            {isFavoriteWavePlaying ? (
+              <div className="artist-flow-banner__badge artist-flow-banner__badge--playing">
+                <div className="equalizer-indicator">
+                  <span />
+                  <span />
+                  <span />
+                </div>
+                <span>Играет поток</span>
+              </div>
+            ) : (
+              <div className="artist-flow-banner__badge">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M8 5V19L19 12L8 5Z" />
+                </svg>
+                <span>Включить поток</span>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -737,6 +788,24 @@ export function FavouritesPage() {
                     </div>
 
                     <div className="favorites-table__col-time">
+                      <button
+                        type="button"
+                        className="detail-row-action-btn"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          startTrackRadio(track);
+                          showToast(`Запущен поток в стиле «${track.title}»`, 'info');
+                        }}
+                        title="Поток по треку"
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9" />
+                          <path d="M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.5" />
+                          <circle cx="12" cy="12" r="2" fill="currentColor" />
+                          <path d="M16.2 7.8c2.3 2.3 2.3 6.1 0 8.5" />
+                          <path d="M19.1 4.9C23 8.8 23 15.2 19.1 19.1" />
+                        </svg>
+                      </button>
                       <button
                         type="button"
                         className="detail-row-action-btn"

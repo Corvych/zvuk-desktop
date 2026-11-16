@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { usePlayerStore } from '../features/player/playerStore';
 import { useAppearanceSettingsStore } from '../features/settings/appearanceSettingsStore';
 import { useWindowFreezeStore, getIsWindowFrozen } from '../lib/windowFreezeStore';
+import { sampleByteFrequencyData } from '../features/player/audioService';
 
 interface AuroraCanvasProps {
   className?: string;
@@ -180,6 +181,15 @@ export function AuroraCanvas({ className }: AuroraCanvasProps) {
     let lastFrameTime = 0;
     let accumulatedTime = 0;
 
+    // Own audio analysis — independent of CSS variables, same pattern as FluidBackdropVisualizer
+    const freqArray = new Uint8Array(64);
+    let smoothedBass = 0;
+    let smoothedMid = 0;
+    let smoothedEnergy = 0;
+    let baselineBass = 0;
+    let baselineMid = 0;
+    let baselineEnergy = 0;
+
     const resize = () => {
       if (!canvas || !gl) return;
       const dpr = Math.min(window.devicePixelRatio || 1, 1.25);
@@ -222,6 +232,44 @@ export function AuroraCanvas({ className }: AuroraCanvasProps) {
 
       accumulatedTime += dt * (isPlaying ? 1.0 : 0.45);
 
+      // Live audio analysis — dynamic baseline so only transient excess reaches the shader
+      let hasReal = false;
+      if (sampleByteFrequencyData(freqArray)) {
+        let sum = 0;
+        for (let i = 1; i < 28; i++) sum += freqArray[i];
+        if (sum > 80) {
+          hasReal = true;
+          const rawBass = (freqArray[1] + freqArray[2] + freqArray[3] + freqArray[4]) / (4 * 255);
+          const rawMid =
+            (freqArray[5] + freqArray[6] + freqArray[7] + freqArray[8] + freqArray[9] +
+             freqArray[10] + freqArray[11] + freqArray[12] + freqArray[13] + freqArray[14]) /
+            (10 * 255);
+          const rawEnergy = rawBass * 0.6 + rawMid * 0.4;
+
+          const bUp = 0.004, bDown = 0.002;
+          baselineBass   += (rawBass   - baselineBass)   * (rawBass   > baselineBass   ? bUp : bDown);
+          baselineMid    += (rawMid    - baselineMid)    * (rawMid    > baselineMid    ? bUp : bDown);
+          baselineEnergy += (rawEnergy - baselineEnergy) * (rawEnergy > baselineEnergy ? bUp : bDown);
+
+          const REL = 4.0;
+          const relBass   = Math.min(1, Math.max(0, rawBass   - baselineBass   * 0.80) * REL);
+          const relMid    = Math.min(1, Math.max(0, rawMid    - baselineMid    * 0.80) * REL);
+          const relEnergy = Math.min(1, Math.max(0, rawEnergy - baselineEnergy * 0.80) * REL);
+
+          smoothedBass   += (relBass   - smoothedBass)   * (relBass   > smoothedBass   ? 0.22 : 0.10);
+          smoothedMid    += (relMid    - smoothedMid)    * (relMid    > smoothedMid    ? 0.18 : 0.09);
+          smoothedEnergy += (relEnergy - smoothedEnergy) * (relEnergy > smoothedEnergy ? 0.20 : 0.10);
+        }
+      }
+      if (!hasReal) {
+        smoothedBass   *= 0.90; baselineBass   *= 0.998;
+        smoothedMid    *= 0.90; baselineMid    *= 0.998;
+        smoothedEnergy *= 0.90; baselineEnergy *= 0.998;
+        if (smoothedBass   < 0.005) smoothedBass   = 0;
+        if (smoothedMid    < 0.005) smoothedMid    = 0;
+        if (smoothedEnergy < 0.005) smoothedEnergy = 0;
+      }
+
       if (gl && canvas) {
         resize();
 
@@ -232,17 +280,13 @@ export function AuroraCanvas({ className }: AuroraCanvasProps) {
         const color1 = parseRgb(rgb1Str, [112 / 255, 220 / 255, 85 / 255]);
         const color2 = parseRgb(rgb2Str, [56 / 255, 239 / 255, 125 / 255]);
 
-        const bass = parseFloat(rootStyle.getPropertyValue('--audio-bass')) || 0;
-        const mid = parseFloat(rootStyle.getPropertyValue('--audio-mid')) || 0;
-        const energy = parseFloat(rootStyle.getPropertyValue('--audio-energy')) || 0;
-
         gl.uniform2f(uResolution, canvas.width, canvas.height);
         gl.uniform1f(uTime, accumulatedTime);
         gl.uniform3f(uColor1, color1[0], color1[1], color1[2]);
         gl.uniform3f(uColor2, color2[0], color2[1], color2[2]);
-        gl.uniform1f(uBass, bass);
-        gl.uniform1f(uMid, mid);
-        gl.uniform1f(uEnergy, energy);
+        gl.uniform1f(uBass, smoothedBass);
+        gl.uniform1f(uMid, smoothedMid);
+        gl.uniform1f(uEnergy, smoothedEnergy);
 
         gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
       }

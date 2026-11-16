@@ -10,12 +10,13 @@ import { RightSidePanel } from './features/player/components/RightSidePanel';
 import { LoginPage } from './features/auth/components/LoginPage';
 import { HomePage } from './features/explore/components/HomePage';
 import { SearchPage } from './features/search/components/SearchPage';
-import { SoundEnergyPage } from './features/sound-energy/components/SoundEnergyPage';
 import { LibraryPage } from './features/library/components/LibraryPage';
 import { FavouritesPage } from './features/favourites/components/FavouritesPage';
 import { PlaylistsPage } from './features/playlists/components/PlaylistsPage';
 import { PlaylistDetailPage } from './features/playlists/components/PlaylistDetailPage';
 import { AddToPlaylistModal } from './features/playlists/components/AddToPlaylistModal';
+import { SberCastPairingModal } from './features/sbercast/components/SberCastPairingModal';
+import { useSberCastStore } from './features/sbercast/sbercastStore';
 import { AlbumDetailPage } from './features/library/components/AlbumDetailPage';
 import { ArtistDetailPage } from './features/artists/components/ArtistDetailPage';
 import { SettingsPage } from './features/settings/components/SettingsPage';
@@ -28,8 +29,10 @@ import { usePlayerStore } from './features/player/playerStore';
 import { useAudioPlayer } from './features/player/useAudioPlayer';
 import { useHotkeys } from './features/player/useHotkeys';
 import { useMediaSession } from './features/player/useMediaSession';
+import { useTaskbarActions } from './features/player/useTaskbarActions';
 import { useDiscordPresence } from './features/player/useDiscordPresence';
 import { useAudioReactive } from './features/player/useAudioReactive';
+import { useClipboardPasteHandler } from './hooks/useClipboardPasteHandler';
 import { useFavouritesStore } from './features/favourites/favouritesStore';
 import { useDislikesStore } from './features/dislikes/dislikesStore';
 import { extractMonetThemeFromPalette, extractMonetFromImage, type MonetTheme } from './lib/monetPalette';
@@ -43,7 +46,9 @@ function AppShell({ isRevealed = true }: { isRevealed?: boolean }) {
   useAudioPlayer();
   useHotkeys();
   useMediaSession();
+  useTaskbarActions();
   useDiscordPresence();
+  useClipboardPasteHandler();
   useAudioReactive();
 
   const location = useLocation();
@@ -54,6 +59,7 @@ function AppShell({ isRevealed = true }: { isRevealed?: boolean }) {
   const isWaveMode = usePlayerStore((s) => s.isWaveMode);
   const waveType = usePlayerStore((s) => s.waveType);
   const waveArtist = usePlayerStore((s) => s.waveArtist);
+  const waveTrack = usePlayerStore((s) => s.waveTrack);
   const loadLikedIds = useFavouritesStore((s) => s.loadLikedIds);
   const loadDislikedIds = useDislikesStore((s) => s.loadDislikedIds);
 
@@ -78,10 +84,25 @@ function AppShell({ isRevealed = true }: { isRevealed?: boolean }) {
       } else {
         setArtistMonet(null);
       }
+    } else if (isWaveMode && waveType === 'track' && waveTrack) {
+      if (waveTrack.palette) {
+        setArtistMonet(extractMonetThemeFromPalette(waveTrack.palette));
+      } else if (waveTrack.imageUrl) {
+        extractMonetFromImage(waveTrack.imageUrl).then(setArtistMonet);
+      } else {
+        setArtistMonet(null);
+      }
+    } else if (
+      isWaveMode &&
+      waveType === 'personal' &&
+      waveMood?.discovery === 'favorite' &&
+      waveMood.dominantEmotions.length === 0
+    ) {
+      extractMonetFromImage('/favourites_album_cover.jpg').then(setArtistMonet);
     } else {
       setArtistMonet(null);
     }
-  }, [isWaveMode, waveType, waveArtist]);
+  }, [isWaveMode, waveType, waveArtist, waveTrack, waveMood]);
 
   useEffect(() => {
     if (artistMonet) {
@@ -154,12 +175,13 @@ function AppShell({ isRevealed = true }: { isRevealed?: boolean }) {
         <Routes>
           <Route path="/" element={<HomePage />} />
           <Route path="/search" element={<SearchPage />} />
-          <Route path="/sound-energy" element={<SoundEnergyPage />} />
+          <Route path="/sound-energy" element={<Navigate to="/" replace />} />
           <Route path="/library" element={<LibraryPage />} />
           <Route path="/favourites" element={<FavouritesPage />} />
           <Route path="/playlists" element={<PlaylistsPage />} />
           <Route path="/playlist/:id" element={<PlaylistDetailPage />} />
           <Route path="/album/:id" element={<AlbumDetailPage />} />
+          <Route path="/release/:id" element={<AlbumDetailPage />} />
           <Route path="/artist/:id" element={<ArtistDetailPage />} />
           <Route path="/settings" element={<SettingsPage />} />
 
@@ -169,6 +191,7 @@ function AppShell({ isRevealed = true }: { isRevealed?: boolean }) {
       <ToastContainer />
       <UpdateModal />
       <AddToPlaylistModal />
+      <SberCastPairingModal />
       <RightSidePanel />
       <PlayerBar />
       <FullscreenPlayer />
@@ -192,6 +215,7 @@ export default function App() {
 
   useEffect(() => {
     useUpdateStore.getState().init();
+    useSberCastStore.getState().init();
     const timer = setTimeout(() => {
       useUpdateStore.getState().checkForUpdates();
     }, 3000);

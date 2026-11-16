@@ -2556,7 +2556,7 @@ fragment PlayerTrackData on Track {
         let image_url = img_obj
             .and_then(|i| i.get("src"))
             .and_then(|s| s.as_str())
-            .map(|src| format_image_url(src, 600, 600));
+            .map(|src| format_image_url(src, 1200, 1200));
 
         let palette = img_obj
             .and_then(|i| i.get("palette"))
@@ -3502,6 +3502,91 @@ fragment PlayerTrackData on Track {
         })
     }
 
+    /// Fetch track radio stream ("Поток по треку / В стиле [трек]").
+    pub async fn get_track_radio(
+        &self,
+        track_id: &str,
+        cursor: Option<u32>,
+        limit: Option<u32>,
+    ) -> Result<ArtistRadioResult, AppError> {
+        let query = r#"query getRadioByTrack($id: ID!, $type: RecommenderRadioEntityType!, $limit: NonNegativeInt! = 25, $cursor: NonNegativeInt = 0) {
+  recommenderRadio(
+    onEntity: {id: $id, type: $type}
+    first: $limit
+    cursor: $cursor
+  ) {
+    cursor
+    tracks {
+      ...PlayerTrackData
+    }
+  }
+}
+
+fragment PlayerTrackData on Track {
+  id
+  title
+  lyrics
+  hasFlac
+  duration
+  explicit
+  availability
+  artistTemplate
+  childParam
+  mark
+  artists {
+    id
+    title
+    image {
+      src
+      palette
+    }
+    mark
+  }
+  release {
+    id
+    title
+    image {
+      src
+      palette
+    }
+  }
+  zchan
+  __typename
+}"#;
+
+        let variables = serde_json::json!({
+            "id": track_id,
+            "type": "TRACK",
+            "limit": limit.unwrap_or(25),
+            "cursor": cursor.unwrap_or(0),
+        });
+
+        let data = self
+            .graphql_op(query, variables, Some("getRadioByTrack"))
+            .await?;
+
+        let radio_obj = data.get("recommenderRadio");
+        let next_cursor = radio_obj
+            .and_then(|r| r.get("cursor"))
+            .and_then(|c| c.as_u64())
+            .unwrap_or(0) as u32;
+
+        let tracks = radio_obj
+            .and_then(|r| r.get("tracks"))
+            .and_then(|t| t.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(parse_track_from_value)
+                    .collect::<Vec<Track>>()
+            })
+            .unwrap_or_default();
+
+        Ok(ArtistRadioResult {
+            cursor: next_cursor,
+            tracks,
+        })
+    }
+
     /// Returns recommended tracks for the player flow/wave.
     pub async fn get_flow(&self, _session_id: Option<&str>) -> Result<FlowState, AppError> {
         let tracks = match self.get_personal_wave(None, Some(15), None, None, None, None).await {
@@ -4029,6 +4114,82 @@ fragment PlayerTrackData on Track {
                 message: format!("HTTP request to {} failed with status {}", url, status),
             })
         }
+    }
+
+    pub async fn fetch_image_bytes(&self, url: &str) -> Result<Vec<u8>, AppError> {
+        let res = self.http.get(url).send().await?;
+        let status = res.status();
+        if status.is_success() {
+            let bytes = res.bytes().await?;
+            Ok(bytes.to_vec())
+        } else {
+            Err(AppError::Api {
+                status: status.as_u16(),
+                message: format!("Image request to {} failed with status {}", url, status),
+            })
+        }
+    }
+
+    /// Resolves short/redirect links (like share.zvuk.com or zvk.onelink.me) to their target URL.
+    pub async fn resolve_redirect(&self, url: &str) -> Result<String, AppError> {
+        let full_url = if !url.starts_with("http://") && !url.starts_with("https://") {
+            format!("https://{}", url)
+        } else {
+            url.to_string()
+        };
+
+        // First attempt: do not follow redirects, read Location header directly for fast 301/302 response
+        let client_no_redirect = reqwest::Client::builder()
+            .user_agent(APP_USER_AGENT)
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .map_err(|e| AppError::Internal(e.to_string()))?;
+
+        if let Ok(res) = client_no_redirect
+            .get(&full_url)
+            .header(reqwest::header::ACCEPT, "*/*")
+            .send()
+            .await
+        {
+            if res.status().is_redirection() {
+                if let Some(loc) = res.headers().get(reqwest::header::LOCATION) {
+                    if let Ok(loc_str) = loc.to_str() {
+                        return Ok(loc_str.to_string());
+                    }
+                }
+            }
+        }
+
+        // Second attempt: follow up to 5 redirects to get final destination URL
+        let client_follow = reqwest::Client::builder()
+            .user_agent(APP_USER_AGENT)
+            .redirect(reqwest::redirect::Policy::limited(5))
+            .build()
+            .map_err(|e| AppError::Internal(e.to_string()))?;
+
+        let res = client_follow
+            .get(&full_url)
+            .header(reqwest::header::ACCEPT, "*/*")
+            .send()
+            .await?;
+
+        Ok(res.url().to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_resolve_share_zvuk_redirect() {
+        let client = ZvukApiClient::new();
+        let target = client
+            .resolve_redirect("https://share.zvuk.com/cLQ0/4wc1wk8k")
+            .await
+            .expect("resolve redirect failed");
+        println!("Resolved redirect to: {}", target);
+        assert!(target.contains("zvuk.com/track/66595872"));
     }
 }
 

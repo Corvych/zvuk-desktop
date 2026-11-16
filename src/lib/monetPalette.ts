@@ -4,6 +4,8 @@
  * and generates cohesive multi-stop gradients, volumetric lighting, and tonal accents.
  */
 
+import { invoke } from '@tauri-apps/api/core';
+
 export interface MonetTheme {
   accentColor: string;      // High-contrast readable color for typography & highlights: "rgb(r, g, b)"
   accentHex: string;        // Hex representation: "#rrggbb"
@@ -325,6 +327,41 @@ export async function extractMonetFromImage(
   }
 
   return new Promise((resolve) => {
+    let triedTauriProxy = false;
+    let objectUrl: string | null = null;
+
+    const cleanupObjectUrl = () => {
+      if (objectUrl) {
+        URL.revokeObjectURL(objectUrl);
+        objectUrl = null;
+      }
+    };
+
+    const resolveFallback = () => {
+      cleanupObjectUrl();
+      const fallback = fallbackPalette
+        ? extractMonetThemeFromPalette(fallbackPalette)
+        : buildDefaultTheme('112, 220, 85');
+      resolve(fallback);
+    };
+
+    const loadViaTauriProxy = async () => {
+      if (triedTauriProxy || !/^https?:\/\//i.test(imageUrl)) {
+        resolveFallback();
+        return;
+      }
+      triedTauriProxy = true;
+      try {
+        const bytes = await invoke<number[]>('fetch_image_bytes', { url: imageUrl });
+        const blob = new Blob([new Uint8Array(bytes)]);
+        objectUrl = URL.createObjectURL(blob);
+        img.removeAttribute('crossOrigin');
+        img.src = objectUrl;
+      } catch {
+        resolveFallback();
+      }
+    };
+
     const img = new Image();
     img.crossOrigin = 'Anonymous';
     img.onload = () => {
@@ -332,10 +369,7 @@ export async function extractMonetFromImage(
         const canvas = document.createElement('canvas');
         const ctx = canvas.getContext('2d');
         if (!ctx) {
-          const fallback = fallbackPalette
-            ? extractMonetThemeFromPalette(fallbackPalette)
-            : buildDefaultTheme('112, 220, 85');
-          resolve(fallback);
+          resolveFallback();
           return;
         }
 
@@ -344,6 +378,7 @@ export async function extractMonetFromImage(
         canvas.height = size;
         ctx.drawImage(img, 0, 0, size, size);
         const data = ctx.getImageData(0, 0, size, size).data;
+        cleanupObjectUrl();
 
         let totalSat = 0;
         let validPixels = 0;
@@ -429,18 +464,20 @@ export async function extractMonetFromImage(
         imageThemeCache.set(imageUrl, theme);
         resolve(theme);
       } catch {
-        const fallback = fallbackPalette
-          ? extractMonetThemeFromPalette(fallbackPalette)
-          : buildDefaultTheme('112, 220, 85');
-        resolve(fallback);
+        if (!triedTauriProxy) {
+          void loadViaTauriProxy();
+        } else {
+          resolveFallback();
+        }
       }
     };
 
     img.onerror = () => {
-      const fallback = fallbackPalette
-        ? extractMonetThemeFromPalette(fallbackPalette)
-        : buildDefaultTheme('112, 220, 85');
-      resolve(fallback);
+      if (!triedTauriProxy) {
+        void loadViaTauriProxy();
+      } else {
+        resolveFallback();
+      }
     };
 
     img.src = imageUrl;

@@ -8,3 +8,4 @@ pub mod window;
 pub mod settings;
 pub mod discord;
 pub mod updater;
+pub mod sbercast;

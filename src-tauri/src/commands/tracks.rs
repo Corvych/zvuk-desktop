@@ -90,5 +90,23 @@ pub async fn fetch_proxy(
     state.api_client.fetch_proxy(&url, headers).await
 }
 
+/// Proxy GET request for remote cover artwork bytes to bypass CORS for canvas color extraction.
+#[tauri::command]
+pub async fn fetch_image_bytes(
+    url: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<u8>, AppError> {
+    state.api_client.fetch_image_bytes(&url).await
+}
+
+/// Resolve redirect links (e.g. share.zvuk.com or onelink short links)
+#[tauri::command]
+pub async fn resolve_redirect(
+    url: String,
+    state: State<'_, AppState>,
+) -> Result<String, AppError> {
+    state.api_client.resolve_redirect(&url).await
+}
+
 
 

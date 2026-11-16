@@ -8,7 +8,7 @@ import { LikeButton } from '../../../components/LikeButton';
 import { DislikeButton } from '../../../components/DislikeButton';
 import { parseLyrics, type LyricLine } from '../lyricsParser';
 import { InstrumentalBreakIndicator } from './InstrumentalBreakIndicator';
-import { getOrCreateAudio } from '../audioService';
+import { useKaraokeSmoothTime } from '../useKaraokeSmoothTime';
 import {
   fetchUnifiedLyrics,
   probeAllSources,
@@ -19,7 +19,6 @@ import {
   type SourceAvailability,
 } from '../lyricsService';
 import { useLyricsSettingsStore } from '../../settings/lyricsSettingsStore';
-import { useWindowFreezeStore, getIsWindowFrozen } from '../../../lib/windowFreezeStore';
 
 type LyricsSourceId = 'zvuk' | 'betterlyrics' | 'netease' | 'lrclib';
 
@@ -56,48 +55,11 @@ export function RightSidePanel() {
   } = useLyricsSettingsStore();
 
   // Sub-second precision for ultra-smooth 60fps karaoke word fill & line scrolling
-  const [smoothTime, setSmoothTime] = useState(progress);
-
-  useEffect(() => {
-    if (sidePanelTab !== 'lyrics' || !isPlaying) {
-      setSmoothTime(progress);
-      return;
-    }
-
-    let animId: number;
-    let isRunning = true;
-    const tick = () => {
-      if (getIsWindowFrozen() || document.hidden) {
-        isRunning = false;
-        return;
-      }
-      const audio = getOrCreateAudio();
-      if (audio && !audio.paused) {
-        setSmoothTime(audio.currentTime);
-      }
-      animId = requestAnimationFrame(tick);
-    };
-    animId = requestAnimationFrame(tick);
-
-    const unsub = useWindowFreezeStore.subscribe((state, prev) => {
-      if (!state.isFrozen && prev.isFrozen) {
-        if (!isRunning) {
-          isRunning = true;
-          animId = requestAnimationFrame(tick);
-        }
-      }
-    });
-
-    return () => {
-      unsub();
-      cancelAnimationFrame(animId);
-    };
-  }, [sidePanelTab, isPlaying]);
-
-  // Synchronize smoothTime immediately on seek/track change
-  useEffect(() => {
-    setSmoothTime(progress);
-  }, [progress]);
+  const [smoothTime, setSmoothTime] = useKaraokeSmoothTime({
+    isActive: sidePanelTab === 'lyrics',
+    isPlaying,
+    progress,
+  });
 
   // Lyrics local state
   const [lyricsInfo, setLyricsInfo] = useState<ResolvedLyrics | null>(() => {

@@ -7,6 +7,7 @@ import { formatTime } from '../../../lib/formatters';
 import { ArtistLinks } from '../../../components/ArtistLinks';
 import { LikeButton } from '../../../components/LikeButton';
 import { CrystalIcon } from '../../../components/CrystalIcon';
+import { showToast } from '../../../components/Toast';
 
 
 export function SearchPage() {
@@ -14,7 +15,7 @@ export function SearchPage() {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<SearchResults | null>(null);
   const [loading, setLoading] = useState(false);
-  const { setQueue, currentTrack, isPlaying, togglePlay } = usePlayerStore();
+  const { setQueue, currentTrack, isPlaying, togglePlay, startTrackRadio } = usePlayerStore();
   const isLiked = useFavouritesStore((s) => s.isLiked);
   const toggleLikeTrack = useFavouritesStore((s) => s.toggleLikeTrack);
 
@@ -185,6 +186,24 @@ export function SearchPage() {
                         </div>
                       </div>
                       <div className="track-item__actions" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <button
+                          type="button"
+                          className="detail-row-action-btn"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            startTrackRadio(track);
+                            showToast(`Запущен поток в стиле «${track.title}»`, 'info');
+                          }}
+                          title="Поток по треку"
+                        >
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9" />
+                            <path d="M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.5" />
+                            <circle cx="12" cy="12" r="2" fill="currentColor" />
+                            <path d="M16.2 7.8c2.3 2.3 2.3 6.1 0 8.5" />
+                            <path d="M19.1 4.9C23 8.8 23 15.2 19.1 19.1" />
+                          </svg>
+                        </button>
                         <LikeButton
                           isLiked={isLiked(track.id)}
                           onToggle={() => toggleLikeTrack(track.id)}

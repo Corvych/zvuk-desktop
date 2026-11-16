@@ -45,6 +45,20 @@ pub async fn get_artist_radio(
         .await
 }
 
+/// Fetch track radio stream ("Поток по треку / В стиле [трек]").
+#[tauri::command]
+pub async fn get_track_radio(
+    track_id: String,
+    cursor: Option<u32>,
+    limit: Option<u32>,
+    state: State<'_, AppState>,
+) -> Result<ArtistRadioResult, AppError> {
+    state
+        .api_client
+        .get_track_radio(&track_id, cursor, limit)
+        .await
+}
+
 /// Start or continue the Sound Energy flow.
 /// Pass session_id from a previous call to continue the same flow.
 #[tauri::command]
